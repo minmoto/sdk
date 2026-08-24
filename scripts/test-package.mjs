@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -72,3 +72,4 @@ if (installedPackage.dependencies && Object.keys(installedPackage.dependencies).
   throw new Error("The public SDK must not have runtime dependencies");
 }
 console.log(`Installed and executed ${packed.filename} in an empty consumer`);
+rmSync(fixture, { recursive: true, force: true });
