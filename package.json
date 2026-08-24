@@ -1,0 +1,60 @@
+{
+  "name": "@minmo/sdk",
+  "version": "0.1.0",
+  "description": "Server-side TypeScript client for the Minmo Partner API.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/minmoto/sdk.git"
+  },
+  "homepage": "https://github.com/minmoto/sdk#readme",
+  "bugs": {
+    "url": "https://github.com/minmoto/sdk/issues"
+  },
+  "keywords": [
+    "minmo",
+    "partner",
+    "payments",
+    "bitcoin",
+    "sdk"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "prepare": "node scripts/install-hooks.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify:upstream": "node scripts/verify-upstream-artifact.mjs",
+    "verify:dist": "node scripts/verify-dist.mjs",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "test:package": "node scripts/test-package.mjs",
+    "check": "npm run verify:upstream && npm run typecheck && npm test && npm run verify:dist",
+    "prepack": "npm run check",
+    "vendor:upstream": "node scripts/vendor-upstream.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.25.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.9.2"
+  }
+}
