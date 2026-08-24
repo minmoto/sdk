@@ -1,4 +1,4 @@
-# @minmo/sdk
+# @minmoto/sdk
 
 The server-side TypeScript client for Minmo Partners.
 
@@ -9,13 +9,13 @@ and defaults to the Minmo production API.
 ## Install
 
 ```sh
-npm install @minmo/sdk
+npm install @minmoto/sdk
 ```
 
 ## Quick start
 
 ```ts
-import { MinmoClient } from "@minmo/sdk";
+import { MinmoClient } from "@minmoto/sdk";
 
 const minmo = new MinmoClient({
   partnerId: process.env.MINMO_PARTNER_ID!,
@@ -42,7 +42,7 @@ configured Partner without a separate `forPartner()` setup call.
 
 ## Authentication and security
 
-`@minmo/sdk` supports only Partner API-key authentication. It sends the key in
+`@minmoto/sdk` supports only Partner API-key authentication. It sends the key in
 the `X-API-Key` request header and does not export bearer-token or token-provider
 authentication helpers.
 

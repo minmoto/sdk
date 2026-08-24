@@ -25,7 +25,7 @@ execFileSync("npm", ["install", "--ignore-scripts", join(fixture, packed.filenam
 writeFileSync(
   join(fixture, "consumer.mjs"),
   [
-    'import * as sdk from "@minmo/sdk";',
+    'import * as sdk from "@minmoto/sdk";',
     'if (typeof sdk.MinmoClient !== "function") throw new Error("MinmoClient missing");',
     'if ("MinmoAuth" in sdk) throw new Error("MinmoAuth must not be public");',
     'new sdk.MinmoClient({ partnerId: "partner-1", apiKey: "secret" });',
@@ -36,7 +36,7 @@ execFileSync("node", [join(fixture, "consumer.mjs")], { stdio: "inherit" });
 writeFileSync(
   join(fixture, "consumer.ts"),
   [
-    'import { Currency, MinmoClient, PaymentChannel, type MinmoClientOptions } from "@minmo/sdk";',
+    'import { Currency, MinmoClient, PaymentChannel, type MinmoClientOptions } from "@minmoto/sdk";',
     "const options: MinmoClientOptions = { partnerId: \"partner-1\", apiKey: \"secret\" };",
     "const client: MinmoClient = new MinmoClient(options);",
     "void client.account.get;",
@@ -66,7 +66,7 @@ execFileSync(
 );
 
 const installedPackage = JSON.parse(
-  readFileSync(join(fixture, "node_modules", "@minmo", "sdk", "package.json"), "utf8"),
+  readFileSync(join(fixture, "node_modules", "@minmoto", "sdk", "package.json"), "utf8"),
 );
 if (installedPackage.dependencies && Object.keys(installedPackage.dependencies).length) {
   throw new Error("The public SDK must not have runtime dependencies");

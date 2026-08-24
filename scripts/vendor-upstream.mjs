@@ -23,8 +23,8 @@ const sdkSource = join(worktree, "packages", "sdk", "src");
 const coreSource = join(worktree, "packages", "core", "src", "index.ts");
 
 assertCleanWorktree(worktree);
-assertDirectory(sdkDist, "Build @minmo/sdk in the clean worktree first");
-assertDirectory(coreDist, "Build @minmo/core in the clean worktree first");
+assertDirectory(sdkDist, "Build the private SDK workspace in the clean worktree first");
+assertDirectory(coreDist, "Build the private core workspace in the clean worktree first");
 
 rmSync(vendorRoot, { recursive: true, force: true });
 mkdirSync(vendorRoot, { recursive: true });

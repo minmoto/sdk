@@ -1,5 +1,5 @@
 {
-  "name": "@minmo/sdk",
+  "name": "@minmoto/sdk",
   "version": "0.1.0",
   "description": "Server-side TypeScript client for the Minmo Partner API.",
   "type": "module",
