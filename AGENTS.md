@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository publishes `@minmo/sdk`, the server-side, API-key-only facade for
+This repository publishes `@minmoto/sdk`, the server-side, API-key-only facade for
 the Minmo Partner API. The implementation is built in private `minmoto/mini`;
 this repository owns the stable public constructor, export boundary,
 documentation, packaging, and releases.
@@ -52,7 +52,7 @@ required.
 ## Updating the upstream artifact
 
 Use a detached, clean Mini worktree at the intended commit. Build `@minmo/core`
-before `@minmo/sdk`, then run:
+before the private SDK workspace, then run:
 
 ```sh
 npm run vendor:upstream -- --worktree /path/to/mini-worktree

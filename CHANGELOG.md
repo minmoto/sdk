@@ -1,3 +1,3 @@
 # Changelog
 
-Notable changes to `@minmo/sdk` will be recorded here by Release Please.
+Notable changes to `@minmoto/sdk` will be recorded here by Release Please.

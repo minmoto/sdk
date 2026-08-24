@@ -3,7 +3,7 @@
   "packages": {
     ".": {
       "release-type": "node",
-      "package-name": "@minmo/sdk",
+      "package-name": "@minmoto/sdk",
       "include-v-in-tag": true,
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
