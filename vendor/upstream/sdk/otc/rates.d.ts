@@ -3,6 +3,7 @@ import type { HttpClient } from "../http";
 export declare class RatesClient {
     private readonly http;
     constructor(http: HttpClient);
+    health(): Promise<FxHealthResponse>;
     quote(baseCurrency: Currency, targetCurrency: Currency): Promise<FxRateResponse>;
     get(baseCurrency: Currency, targetCurrency: Currency): Promise<FxRateResponse>;
     detailed(baseCurrency: Currency, targetCurrency: Currency): Promise<AggregatedFxRateResponse>;

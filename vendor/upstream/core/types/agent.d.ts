@@ -45,6 +45,11 @@ export declare enum SwapState {
     FIAT_RECEIVER_TIMEOUT = "fiat_receiver_timeout",
     TRANSFERRED_TO_BACKUP = "transferred_to_backup"
 }
+export declare enum SwapRepairAction {
+    ATTACH_ESCROW = "attach_escrow",
+    CLOSE_LEGACY = "close_legacy",
+    RECOVER_PAYOUT = "recover_payout"
+}
 export declare enum SwapCancellationActorType {
     USER = "user",
     AGENT = "agent",

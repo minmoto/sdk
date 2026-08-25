@@ -185,12 +185,17 @@ var EventSubscriptionImpl = class {
     this.http = http;
     this.options = options;
     this.streamKey = options.streamKey ?? this.defaultStreamKey();
-    options.signal?.addEventListener("abort", () => void this.close(), {
-      once: true
-    });
+    if (options.signal?.aborted) {
+      void this.close();
+    } else {
+      options.signal?.addEventListener("abort", () => void this.close(), {
+        once: true
+      });
+    }
     void this.run();
   }
   currentState = "idle" /* IDLE */;
+  hasConnected = false;
   abortController = new AbortController();
   seenIds = /* @__PURE__ */ new Set();
   streamKey;
@@ -213,7 +218,7 @@ var EventSubscriptionImpl = class {
     while (!this.abortController.signal.aborted) {
       try {
         this.setState(
-          retry ? "reconnecting" /* RECONNECTING */ : "connecting" /* CONNECTING */
+          retry || this.hasConnected ? "reconnecting" /* RECONNECTING */ : "connecting" /* CONNECTING */
         );
         await this.connect();
         retry = 0;
@@ -265,6 +270,7 @@ var EventSubscriptionImpl = class {
     if (!response.ok || !response.body) {
       throw new Error(`Event stream failed (${response.status})`);
     }
+    this.hasConnected = true;
     this.setState("connected" /* CONNECTED */);
     this.resolveReady();
     await this.readStream(response.body);
@@ -288,20 +294,25 @@ var EventSubscriptionImpl = class {
   }
   async handleRecord(record) {
     let id;
+    let eventName;
     const data = [];
     for (const line of record.split(/\r?\n/)) {
       if (line.startsWith("id:")) id = line.slice(3).trim();
+      if (line.startsWith("event:")) eventName = line.slice(6).trim();
       if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
     }
     if (!data.length) return;
-    const event = JSON.parse(data.join("\n"));
-    if (event.type === "resync_required") {
+    const parsed = JSON.parse(data.join("\n"));
+    const parsedType = parsed !== null && typeof parsed === "object" && "type" in parsed ? parsed.type : void 0;
+    if (eventName === "resync_required" /* RESYNC_REQUIRED */ || parsedType === "resync_required" /* RESYNC_REQUIRED */) {
+      const payload = parsed !== null && typeof parsed === "object" && "payload" in parsed ? parsed.payload : parsed;
       throw new ResyncRequiredError(
         String(
-          event.payload?.reason ?? "Event cursor requires resynchronization"
+          payload?.reason ?? "Event cursor requires resynchronization"
         )
       );
     }
+    const event = parsed;
     const eventId = id ?? event.id;
     if (!eventId || this.seenIds.has(eventId)) return;
     this.seenIds.add(eventId);
@@ -1315,6 +1326,9 @@ var RatesClient = class {
   constructor(http) {
     this.http = http;
   }
+  health() {
+    return this.http.request("/fx/health");
+  }
   quote(baseCurrency, targetCurrency) {
     return this.get(baseCurrency, targetCurrency);
   }
@@ -1462,18 +1476,6 @@ var SwapClient = class {
       { method: "PATCH", body: JSON.stringify(input) }
     );
   }
-  export(query = {}) {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(query)) {
-      if (value !== void 0) params.set(key, String(value));
-    }
-    return this.http.fetchResponse(`/swap/export?${params}`).then(async (response) => {
-      if (!response.ok) {
-        throw new Error(`Swap export failed (${response.status})`);
-      }
-      return response.blob();
-    });
-  }
   repair(partnerId, swapId, input) {
     return this.http.request(
       `/teams/${encodeURIComponent(partnerId)}/swaps/${encodeURIComponent(swapId)}/repair`,
@@ -1499,11 +1501,12 @@ var OtcClient = class {
   rates;
   agents;
   subscribe(options) {
+    const { eventTypes, ...subscriptionOptions } = options;
     return subscribeToDomainEvents(
       this.events,
       "otc",
-      Object.values(OtcEventType),
-      options
+      eventTypes ?? Object.values(OtcEventType),
+      subscriptionOptions
     );
   }
 };
@@ -1644,13 +1647,30 @@ var ReferralCodeScope = /* @__PURE__ */ ((ReferralCodeScope2) => {
 async function readPartnerDetail(http, partnerId) {
   return http.request(partnerPath(partnerId));
 }
+function createPartnerDetailReader(http, partnerId) {
+  let pending;
+  return () => {
+    if (pending) return pending;
+    const request = readPartnerDetail(http, partnerId);
+    pending = request;
+    const clearPending = () => {
+      if (pending === request) pending = void 0;
+    };
+    void request.then(clearPending, clearPending);
+    return request;
+  };
+}
 var AccountClient = class {
-  constructor(http, partnerId) {
+  constructor(http, partnerId, readDetail = createPartnerDetailReader(
+    http,
+    partnerId
+  )) {
     this.http = http;
     this.partnerId = partnerId;
+    this.readDetail = readDetail;
   }
   async get() {
-    const detail = await readPartnerDetail(this.http, this.partnerId);
+    const detail = await this.readDetail();
     return detail.team;
   }
   async update(input) {
@@ -1692,12 +1712,16 @@ var AnalyticsClient = class {
   }
 };
 var MembersClient = class {
-  constructor(http, partnerId) {
+  constructor(http, partnerId, readDetail = createPartnerDetailReader(
+    http,
+    partnerId
+  )) {
     this.http = http;
     this.partnerId = partnerId;
+    this.readDetail = readDetail;
   }
   async list() {
-    const detail = await readPartnerDetail(this.http, this.partnerId);
+    const detail = await this.readDetail();
     return detail.members;
   }
   async add(input) {
@@ -1728,12 +1752,16 @@ var MembersClient = class {
   }
 };
 var InvitationsClient = class {
-  constructor(http, partnerId) {
+  constructor(http, partnerId, readDetail = createPartnerDetailReader(
+    http,
+    partnerId
+  )) {
     this.http = http;
     this.partnerId = partnerId;
+    this.readDetail = readDetail;
   }
   async list() {
-    const detail = await readPartnerDetail(this.http, this.partnerId);
+    const detail = await this.readDetail();
     return detail.invitations;
   }
   async create(input) {
@@ -1744,12 +1772,16 @@ var InvitationsClient = class {
   }
 };
 var ApiKeysClient = class {
-  constructor(http, partnerId) {
+  constructor(http, partnerId, readDetail = createPartnerDetailReader(
+    http,
+    partnerId
+  )) {
     this.http = http;
     this.partnerId = partnerId;
+    this.readDetail = readDetail;
   }
   async list() {
-    const detail = await readPartnerDetail(this.http, this.partnerId);
+    const detail = await this.readDetail();
     return detail.apiKeys;
   }
   async create(input) {
@@ -1985,12 +2017,13 @@ var PartnerClient = class extends MinmoClient {
   referrals;
   constructor(options, partnerId) {
     super(options, partnerId);
-    this.account = new AccountClient(this.http, partnerId);
+    const readDetail = createPartnerDetailReader(this.http, partnerId);
+    this.account = new AccountClient(this.http, partnerId, readDetail);
     this.settings = new SettingsClient(this.http, partnerId);
     this.analytics = new AnalyticsClient(this.http, partnerId);
-    this.members = new MembersClient(this.http, partnerId);
-    this.invitations = new InvitationsClient(this.http, partnerId);
-    this.apiKeys = new ApiKeysClient(this.http, partnerId);
+    this.members = new MembersClient(this.http, partnerId, readDetail);
+    this.invitations = new InvitationsClient(this.http, partnerId, readDetail);
+    this.apiKeys = new ApiKeysClient(this.http, partnerId, readDetail);
     this.referrals = new ReferralsClient(this.http, partnerId);
   }
 };

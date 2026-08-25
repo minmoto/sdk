@@ -1,4 +1,4 @@
-import type { AgentSelectionMode, ConfirmationRole, Currency, DisputeDetails, PaymentDetails, PaymentChannel, PaymentInstructions, SwapAgentTeamContext, SwapMetadata, SwapState, SwapType, PartnerQuoteResponse } from "@minmo/core";
+import type { AgentSelectionMode, ConfirmationRole, Currency, DisputeDetails, PaymentDetails, PaymentChannel, PaymentInstructions, SwapAgentTeamContext, SwapMetadata, SwapRepairAction, SwapState, SwapType, PartnerQuoteResponse } from "@minmo/core";
 import type { ExecuteDisputeRefundInput, OpenDisputeInput, ResolveDisputeInput, SubmitDisputeEvidenceInput } from "../disputes";
 import type { SwapEscrowPaymentStatusResponse } from "../escrow";
 import type { HttpClient } from "../http";
@@ -114,10 +114,12 @@ export type SubmitPaymentProofInput = {
     beneficiaryId?: string;
 };
 export type SwapActionInput = Record<string, unknown>;
-export type SwapRepairInput = SwapActionInput & {
-    action: string;
-    expectedState: string;
+export type SwapRepairInput = {
+    action: SwapRepairAction;
+    expectedState: SwapState;
     reason: string;
+    newInvoice?: string;
+    newOnchainAddress?: string;
 };
 export declare class SwapClient {
     private readonly http;
@@ -136,7 +138,6 @@ export declare class SwapClient {
     executeRefund(swapId: string, input: ExecuteDisputeRefundInput): Promise<SwapResource>;
     resolveDispute(swapId: string, input: ResolveDisputeInput): Promise<SwapResource>;
     transfer(swapId: string, input: SwapActionInput): Promise<SwapResource>;
-    export(query?: SwapListQuery): Promise<Blob>;
     repair(partnerId: string, swapId: string, input: SwapRepairInput): Promise<SwapResource>;
     escrowStatus(swapId: string): Promise<SwapEscrowPaymentStatusResponse>;
 }
