@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/minmoto/sdk/compare/sdk-v0.1.1...sdk-v0.2.0) (2026-08-25)
+
+
+### Features
+
+* refresh vendored sdk ([6a4e9d2](https://github.com/minmoto/sdk/commit/6a4e9d2f98897d56e2c80762c2e5120f046b15f8))
+
 ## [0.1.1](https://github.com/minmoto/sdk/compare/sdk-v0.1.0...sdk-v0.1.1) (2026-08-24)
 
 
