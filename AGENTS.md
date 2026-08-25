@@ -51,16 +51,19 @@ required.
 
 ## Updating the upstream artifact
 
-Use a detached, clean Mini worktree at the intended commit. Build `@minmo/core`
-before the private SDK workspace, then run:
+Use the one-command refresh with the intended Mini commit or ref:
 
 ```sh
-npm run vendor:upstream -- --worktree /path/to/mini-worktree
+npm run refresh:upstream -- --ref <mini-commit>
 ```
 
-Review `vendor/upstream/manifest.json`, run the full verification commands, and
-commit the generated artifact together with any facade or documentation changes
-that depend on it. Never edit generated vendor files by hand.
+The command installs locked dependencies, creates a temporary detached Mini
+worktree, builds `@minmo/core` and the private SDK in order, refreshes the
+artifact, runs the full package verification, and reports removed declaration
+lines. Use
+`--mini <path>` when Mini is not the sibling `../mini` checkout. Review
+`vendor/upstream/manifest.json` and every reported removal before committing.
+Never edit generated vendor files by hand.
 
 ## Compatibility and releases
 
