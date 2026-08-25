@@ -130,6 +130,10 @@ export interface PayInvoice {
     paidAmount?: string;
     /** Hosted checkout page to send the customer to. */
     checkoutUrl?: string;
+    /** Raw BOLT11 payment request for a direct Lightning payment. */
+    lightningInvoice?: string;
+    /** Bitcoin address for a direct on-chain payment. */
+    onChainAddress?: string;
     /** The partner's own reference, echoed back. */
     reference?: string | null;
     createdAt?: string;

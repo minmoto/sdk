@@ -7,7 +7,9 @@ import { SwapClient } from "./swap";
 export * from "./agents";
 export * from "./rates";
 export * from "./swap";
-export type OtcSubscriptionOptions = DomainEventSubscriptionOptions<OtcEventType>;
+export type OtcSubscriptionOptions = DomainEventSubscriptionOptions<OtcEventType> & {
+    eventTypes?: readonly OtcEventType[];
+};
 export declare class OtcClient {
     private readonly events;
     readonly swap: SwapClient;

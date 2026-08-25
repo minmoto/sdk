@@ -87,13 +87,27 @@ export interface ReferralCode {
 export interface AnalyticsOptions {
     bucket?: AnalyticsBucket;
 }
+interface PartnerDetailResponse {
+    team: Account;
+    members: Member[];
+    invitations: Invitation[];
+    apiKeys: ApiKey[];
+}
+export type PartnerDetailReader = () => Promise<PartnerDetailResponse>;
 export interface CommandResult {
     ok: true;
 }
+/**
+ * Coalesces concurrent projections of the aggregate Partner-management read.
+ * The API exposes account, member, invitation, and API-key metadata from one
+ * endpoint, while the SDK keeps those concepts in focused clients.
+ */
+export declare function createPartnerDetailReader(http: HttpClient, partnerId: string): PartnerDetailReader;
 export declare class AccountClient {
     private readonly http;
     private readonly partnerId;
-    constructor(http: HttpClient, partnerId: string);
+    private readonly readDetail;
+    constructor(http: HttpClient, partnerId: string, readDetail?: PartnerDetailReader);
     get(): Promise<Account>;
     update(input: UpdateAccountInput): Promise<Account>;
 }
@@ -113,7 +127,8 @@ export declare class AnalyticsClient {
 export declare class MembersClient {
     private readonly http;
     private readonly partnerId;
-    constructor(http: HttpClient, partnerId: string);
+    private readonly readDetail;
+    constructor(http: HttpClient, partnerId: string, readDetail?: PartnerDetailReader);
     list(): Promise<Member[]>;
     add(input: AddMemberInput): Promise<Member[]>;
     updateRoles(memberId: string, input: UpdateMemberRolesInput): Promise<Member[]>;
@@ -122,14 +137,16 @@ export declare class MembersClient {
 export declare class InvitationsClient {
     private readonly http;
     private readonly partnerId;
-    constructor(http: HttpClient, partnerId: string);
+    private readonly readDetail;
+    constructor(http: HttpClient, partnerId: string, readDetail?: PartnerDetailReader);
     list(): Promise<Invitation[]>;
     create(input: CreateInvitationInput): Promise<CommandResult>;
 }
 export declare class ApiKeysClient {
     private readonly http;
     private readonly partnerId;
-    constructor(http: HttpClient, partnerId: string);
+    private readonly readDetail;
+    constructor(http: HttpClient, partnerId: string, readDetail?: PartnerDetailReader);
     list(): Promise<ApiKey[]>;
     create(input: CreateApiKeyInput): Promise<ApiKeyFirstView>;
     updatePolicy(apiKeyId: string, policy: ApiKeyResourcePolicy): Promise<ApiKey[]>;
@@ -142,4 +159,5 @@ export declare class ReferralsClient {
     get(): Promise<ReferralCode | null>;
     rotate(): Promise<ReferralCode>;
 }
+export {};
 //# sourceMappingURL=partner.d.ts.map
