@@ -49,6 +49,7 @@
     "test:package": "node scripts/test-package.mjs",
     "check": "npm run verify:upstream && npm run typecheck && npm test && npm run verify:dist",
     "prepack": "npm run check",
+    "refresh:upstream": "node scripts/refresh-upstream.mjs",
     "vendor:upstream": "node scripts/vendor-upstream.mjs"
   },
   "devDependencies": {

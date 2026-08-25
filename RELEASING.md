@@ -29,6 +29,40 @@ Do not add a long-lived npm automation token to GitHub Actions.
 
 ## Preparing a release
 
+### Refreshing the vendored Mini SDK
+
+Start from a clean public SDK checkout and pin the intended Mini commit:
+
+```sh
+npm run refresh:upstream -- --ref <mini-commit>
+```
+
+The command uses the sibling `../mini` repository by default. It fetches that
+repository's `origin`, installs locked dependencies in both repositories,
+creates a temporary detached worktree at the resolved commit, builds
+`@minmo/core` and the private SDK, regenerates `vendor/upstream`, and runs:
+
+```sh
+npm run check
+npm run test:package
+npm pack --dry-run
+```
+
+Use `--mini <path>` for another local Mini repository or `--no-fetch` when
+the pinned commit is already available and the refresh must stay offline.
+
+After the command succeeds, review:
+
+- the old and new commits printed by the command;
+- `vendor/upstream/manifest.json`;
+- the generated artifact diff;
+- every removed declaration line reported as a compatibility risk.
+
+Commit only the generated vendor artifact and any public tests or documentation
+that explain its consumer-visible changes. Do not commit `dist`, a package
+tarball, or the temporary Mini worktree. The refresh command does not update
+versions, changelogs, tags, or npm.
+
 Merge changes using Conventional Commit subjects:
 
 - `fix: ...` requests a patch release.
