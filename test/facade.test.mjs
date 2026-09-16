@@ -4,6 +4,8 @@ import { afterEach, test } from "node:test";
 import {
   MINMO_PRODUCTION_BASE_URL,
   MinmoClient,
+  PspProvider,
+  SourceType,
 } from "../dist/index.js";
 
 const originalFetch = globalThis.fetch;
@@ -68,6 +70,35 @@ test("accepts an optional deployment base URL", async () => {
   await client.account.get();
 
   assert.equal(url, "https://api.staging.minmo.to/api/v1/teams/partner-1");
+});
+
+test("binds PSP and accounting integrations to the Partner API key", async () => {
+  const requests = [];
+  globalThis.fetch = async (input, init) => {
+    requests.push(new Request(input, init));
+    return Response.json([]);
+  };
+
+  const client = new MinmoClient({
+    partnerId: "partner/1",
+    apiKey: "secret-key",
+  });
+
+  await client.integrations.psp.listProviders();
+  await client.integrations.accounting.listSources(SourceType.PSP_CONNECTION);
+
+  assert.deepEqual(
+    requests.map((request) => request.url),
+    [
+      "https://api.minmo.to/api/v1/teams/partner%2F1/psp/providers",
+      "https://api.minmo.to/api/v1/teams/partner%2F1/accounting/sources?type=psp_connection",
+    ],
+  );
+  assert.deepEqual(
+    requests.map((request) => request.headers.get("X-API-Key")),
+    ["secret-key", "secret-key"],
+  );
+  assert.equal(PspProvider.SAFARICOM_DARAJA, "safaricom_daraja");
 });
 
 test("rejects blank Partner IDs and API keys", () => {

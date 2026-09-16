@@ -37,9 +37,16 @@ export declare class HttpClient {
     private readonly auth?;
     private readonly fetchFn;
     private readonly timeoutMs;
+    private authInvalidationPromise;
     constructor(options: HttpClientOptions);
     request<T>(path: string, init?: RequestInit): Promise<T>;
+    /** Returns an unconsumed successful response for streaming/binary callers. */
+    requestResponse(path: string, init?: RequestInit): Promise<Response>;
     fetchResponse(path: string, init?: RequestInit): Promise<Response>;
+    private requestWithAuthRetry;
+    private responseWithAuthRetry;
+    private createResponseError;
+    private invalidateAuth;
     private parseBody;
 }
 //# sourceMappingURL=http.d.ts.map

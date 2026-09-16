@@ -1,4 +1,4 @@
-import type { AgentSelectionMode, ConfirmationRole, Currency, DisputeDetails, PaymentDetails, PaymentChannel, PaymentInstructions, SwapAgentTeamContext, SwapMetadata, SwapRepairAction, SwapState, SwapType, PartnerQuoteResponse } from "@minmo/core";
+import type { AgentSelectionMode, ConfirmationRole, Currency, DisputeDetails, PaymentDetails, PaymentChannel, PaymentInstructions, SwapAgentTeamContext, SwapMetadata, SwapRepairAction, SwapListSegment, SwapState, SwapType, PartnerQuoteResponse } from "@minmo/core";
 import type { ExecuteDisputeRefundInput, OpenDisputeInput, ResolveDisputeInput, SubmitDisputeEvidenceInput } from "../disputes";
 import type { SwapEscrowPaymentStatusResponse } from "../escrow";
 import type { HttpClient } from "../http";
@@ -57,8 +57,11 @@ export type SwapFeeSnapshot = {
     escrowFeeBps: number;
     escrowFeeSats: string;
     payoutNetworkFeeSats: string;
+    receiverPayoutSats?: string;
+    principalSats?: string;
     receiverRole: ConfirmationRole;
     policyVersion: number;
+    estimated?: boolean;
 };
 export type SwapAgentResource = {
     id: string;
@@ -82,6 +85,7 @@ export type SwapResourceMetadata = SwapMetadata & Record<string, unknown> & {
 export type SwapListQuery = {
     page?: number;
     limit?: number;
+    segment?: SwapListSegment;
     state?: SwapState;
     type?: SwapType;
     id?: string;
@@ -124,10 +128,14 @@ export type SwapRepairInput = {
 export declare class SwapClient {
     private readonly http;
     constructor(http: HttpClient);
+    private listPath;
     create(input: CreateSwapInput): Promise<SwapResource>;
     get(swapId: string): Promise<SwapResource>;
     listDisputes(): Promise<SwapResource[]>;
     list(query?: SwapListQuery): Promise<SwapListResponse>;
+    listForPartner(partnerId: string, query?: SwapListQuery): Promise<SwapListResponse>;
+    getForPartner(partnerId: string, swapId: string): Promise<SwapResource>;
+    cancelForPartner(partnerId: string, swapId: string, input?: CancelSwapInput): Promise<SwapResource>;
     claim(swapId: string, input?: SwapClaimInput): Promise<SwapResource>;
     cancel(swapId: string, input?: CancelSwapInput): Promise<SwapResource>;
     confirmPayment(swapId: string, input: ConfirmPaymentInput): Promise<SwapResource>;

@@ -1,7 +1,7 @@
-import { WalletEventType, type BitcoinNetwork, type EscrowNetwork, type OnchainConfirmationSpeed, type PayoutFeeQuote, type PayoutDestinationType, type PayoutResult, type StableBalanceConfig, type StableBalanceResult, type WalletOverview, type WalletPaymentHistoryItem, type WalletPayoutDetails, type WalletProvider, type WalletResponse, type WalletConnectionScope } from "@minmo/core";
+import { WalletEventType, type BitcoinNetwork, type EscrowNetwork, type OnchainConfirmationSpeed, type PayoutFeeQuote, type PayoutDestinationType, type PayoutResult, type StableBalanceConfig, type StableBalanceResult, type WalletOverview, type WalletDepositClaimInput, type WalletDepositClaimResult, type WalletPaymentHistoryItem, type WalletPayoutDetails, type WalletProvider, type WalletResponse, type WalletConnectionScope } from "@minmo/core";
 import { type DomainEventSubscriptionOptions, type EventSubscription, type EventsClient } from "./events";
 import type { HttpClient } from "./http";
-export type { PayoutFeeQuote, PayoutResult, StableBalanceConfig, StableBalanceOverview, StableBalanceResult, WalletOverview, WalletPaymentHistoryItem, WalletPayoutDetails, WalletResponse, } from "@minmo/core";
+export type { PayoutFeeQuote, PayoutResult, StableBalanceConfig, StableBalanceOverview, StableBalanceResult, WalletOverview, WalletDepositClaimInput, WalletDepositClaimResult, WalletUnclaimedDeposit, WalletPaymentHistoryItem, WalletPayoutDetails, WalletResponse, } from "@minmo/core";
 export type WalletListResponse = {
     items: WalletResponse[];
 };
@@ -103,6 +103,7 @@ export declare class WalletClient {
     delete(teamId: string, walletId: string): Promise<DeleteWalletResponse>;
     overview(teamId: string, walletId: string): Promise<WalletOverview>;
     history(teamId: string, walletId: string): Promise<WalletHistoryResponse>;
+    claimDeposit(teamId: string, walletId: string, txid: string, vout: number, input: WalletDepositClaimInput): Promise<WalletDepositClaimResult>;
     receive(teamId: string, walletId: string, input: WalletReceiveInput): Promise<WalletReceiveResponse>;
     send(teamId: string, walletId: string, input: WalletSendInput): Promise<PayoutResult>;
     quotePayout(teamId: string, walletId: string, input: WalletPayoutQuoteInput): Promise<PayoutFeeQuote>;

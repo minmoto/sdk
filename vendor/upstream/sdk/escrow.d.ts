@@ -1,4 +1,4 @@
-import type { AuditEvent, CreateEscrowCommand, DescriptorPublishResult, DisputeResolutionCommand, EscrowDescriptorSettingsResponse, EscrowFeePolicy, EscrowPage, EscrowPayoutRecord, EscrowRecord, MoneyMovementCommand, ParticipantRole, UpdateEscrowDescriptorRequest, WalletPayoutDetails } from "@minmo/core";
+import type { AuditEvent, CreateEscrowCommand, DescriptorPublishResult, DisputeResolutionCommand, EscrowDescriptorSettingsResponse, EscrowActivityResponse, EscrowFeePolicy, EscrowPage, EscrowPayoutRecord, EscrowRecord, EscrowStatus, MoneyMovementCommand, ParticipantRole, UpdateEscrowDescriptorRequest, WalletPayoutDetails } from "@minmo/core";
 import { EscrowEventType } from "@minmo/core";
 import { EscrowDisputesClient } from "./disputes";
 import { type DomainEventSubscriptionOptions, type EventSubscription, type EventsClient } from "./events";
@@ -10,6 +10,13 @@ export type CreateEscrowInput = Omit<CreateEscrowCommand, "feeSnapshot" | "recip
 export type EscrowListQuery = {
     limit?: number;
     offset?: number;
+    statuses?: readonly EscrowStatus[];
+    reference?: string;
+    terminal?: boolean;
+};
+export type EscrowActivityQuery = {
+    open?: EscrowListQuery;
+    history?: EscrowListQuery;
 };
 export type EscrowPayoutStatus = {
     escrowReference: string;
@@ -85,10 +92,12 @@ export declare class EscrowClient {
     constructor(http: HttpClient, events: EventsClient);
     create(teamId: string, input: CreateEscrowInput): Promise<EscrowRecord>;
     list(teamId: string, query?: EscrowListQuery): Promise<EscrowPage>;
+    activity(teamId: string, query?: EscrowActivityQuery): Promise<EscrowActivityResponse>;
     get(teamId: string, reference: string): Promise<EscrowRecord>;
     payoutStatus(teamId: string, reference: string): Promise<EscrowPayoutStatus>;
     audit(teamId: string, reference: string): Promise<EscrowAuditResponse>;
     verifyFunding(teamId: string, reference: string): Promise<EscrowRecord>;
+    expireUnfunded(teamId: string, reference: string): Promise<EscrowRecord>;
     /** Test-only command; production deployments reject it. */
     markMockFundingComplete(teamId: string, reference: string): Promise<EscrowRecord>;
     release(teamId: string, reference: string, input: MoneyMovementCommand): Promise<EscrowRecord>;

@@ -7,9 +7,12 @@ import { HttpClient } from "./http";
 import type { FetchLike } from "./http";
 import { OtcClient } from "./otc";
 import { PayClient } from "./pay";
+import { PspClient } from "./psp";
 import { AccountClient, AnalyticsClient, ApiKeysClient, InvitationsClient, MembersClient, ReferralsClient, SettingsClient } from "./partner";
 import { WalletClient } from "./wallet";
+import { AccountingClient } from "./accounting";
 export * from "./auth";
+export * from "./accounting";
 export * from "./events";
 export * from "./escrow";
 export * from "./disputes";
@@ -17,6 +20,7 @@ export * from "./http";
 export * from "./otc";
 export * from "./pay";
 export * from "./partner";
+export * from "./psp";
 export * from "./wallet";
 export type MinmoClientOptions = {
     baseUrl: string;
@@ -36,6 +40,8 @@ export declare class MinmoClient {
     readonly otc: OtcClient;
     readonly integrations: {
         readonly pay: PayClient;
+        readonly psp: PspClient;
+        readonly accounting: AccountingClient;
     };
     constructor(options: MinmoClientOptions, partnerId?: string | undefined);
     /**

@@ -6,7 +6,8 @@ Build server-side Minmo Partner integrations in TypeScript.
 [Minmo](https://www.minmo.to) Partner API. It gives you one Partner-bound
 interface for bringing Bitcoin and local-currency workflows into your own
 services: quote rates, coordinate OTC swaps and agents, operate wallets and
-escrow, create Minmo Pay stores and invoices, and consume live domain events.
+escrow, create Minmo Pay stores and invoices, connect payment service
+providers, generate accounting reports, and consume live domain events.
 
 Create a client with your Partner ID and API key, then start calling
 Partner-scoped resources. The production API is configured by default, so
@@ -66,6 +67,8 @@ the `X-API-Key` header. Calls such as `account.get()`, `settings.get()`, and
 | --- | --- | --- |
 | Partner operations | `account`, `settings`, `analytics`, `members`, `invitations`, `apiKeys`, `referrals` | Manage the Partner account, team access, reporting, API keys, and referrals |
 | Minmo Pay | `integrations.pay` | Create stores and invoices, connect settlement wallets, read authoritative invoice state, and subscribe to Pay events |
+| Payment service providers | `integrations.psp` | Connect providers, collect and disburse funds, inspect liquidity and statements, reconcile transactions, and subscribe to PSP events |
+| Accounting | `integrations.accounting` | List accounting sources, manage reporting templates, and generate CSV reports |
 | OTC | `otc.rates`, `otc.swap`, `otc.agents` | Quote Bitcoin and local-currency rates, coordinate swaps, and operate an agent network |
 | Wallets | `wallet` | Create and manage wallets, receive or send funds, transfer balances, and inspect wallet activity |
 | Escrow | `escrow` | Create and reconcile escrows, verify funding, release or refund funds, and manage disputes |
@@ -85,6 +88,23 @@ const minmo = new MinmoClient({
 const [quote, stores] = await Promise.all([
   minmo.otc.rates.quote(Currency.BTC, Currency.KES),
   minmo.integrations.pay.listStores(),
+]);
+```
+
+For payment-provider and accounting integrations, use the same Partner-bound
+client:
+
+```ts
+import { MinmoClient, SourceType } from "@minmoto/sdk";
+
+const minmo = new MinmoClient({
+  partnerId: process.env.MINMO_PARTNER_ID!,
+  apiKey: process.env.MINMO_API_KEY!,
+});
+
+const [providers, accountingSources] = await Promise.all([
+  minmo.integrations.psp.listProviders(),
+  minmo.integrations.accounting.listSources(SourceType.PSP_CONNECTION),
 ]);
 ```
 

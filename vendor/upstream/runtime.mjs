@@ -56,6 +56,7 @@ var HttpClient = class {
   auth;
   fetchFn;
   timeoutMs;
+  authInvalidationPromise = null;
   constructor(options) {
     const url = new URL(options.baseUrl);
     if (!/^https?:$/.test(url.protocol)) {
@@ -69,8 +70,48 @@ var HttpClient = class {
   async request(path, init = {}) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const requestSignal = init.signal;
+    const abortRequest = () => controller.abort();
+    if (requestSignal?.aborted) {
+      abortRequest();
+    } else {
+      requestSignal?.addEventListener("abort", abortRequest, { once: true });
+    }
+    try {
+      return await this.requestWithAuthRetry(
+        path,
+        init,
+        controller.signal,
+        true
+      );
+    } finally {
+      clearTimeout(timeout);
+      requestSignal?.removeEventListener("abort", abortRequest);
+    }
+  }
+  /** Returns an unconsumed successful response for streaming/binary callers. */
+  async requestResponse(path, init = {}) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    const requestSignal = init.signal;
+    const abortRequest = () => controller.abort();
+    if (requestSignal?.aborted) abortRequest();
+    else requestSignal?.addEventListener("abort", abortRequest, { once: true });
+    try {
+      return await this.responseWithAuthRetry(
+        path,
+        init,
+        controller.signal,
+        true
+      );
+    } finally {
+      clearTimeout(timeout);
+      requestSignal?.removeEventListener("abort", abortRequest);
+    }
+  }
+  async fetchResponse(path, init = {}) {
     const headers = new Headers(init.headers);
-    headers.set("Accept", "application/json");
+    headers.set("Accept", headers.get("Accept") ?? "application/json");
     if (init.body && !headers.has("Content-Type")) {
       headers.set("Content-Type", "application/json");
     }
@@ -79,65 +120,95 @@ var HttpClient = class {
     )) {
       headers.set(name, value);
     }
-    try {
-      let response;
-      try {
-        response = await this.fetchResponse(path, {
-          ...init,
-          headers,
-          signal: init.signal ?? controller.signal
-        });
-      } catch (error) {
-        throw new MinmoTransportError(
-          error instanceof Error ? error.message : String(error),
-          error
-        );
-      }
-      const text = await response.text();
-      const body = text ? this.parseBody(text) : void 0;
-      if (!response.ok) {
-        const requestId = response.headers.get("x-request-id") ?? void 0;
-        const message = typeof body === "object" && body && "message" in body ? String(body.message) : `Minmo API request failed (${response.status})`;
-        if (response.status === 401) {
-          throw new MinmoAuthenticationError(
-            message,
-            response.status,
-            body,
-            requestId
-          );
-        }
-        if (response.status === 403) {
-          throw new MinmoAuthorizationError(
-            message,
-            response.status,
-            body,
-            requestId
-          );
-        }
-        if (response.status === 429) {
-          throw new MinmoRateLimitError(
-            message,
-            response.status,
-            body,
-            requestId
-          );
-        }
-        throw new MinmoApiError(message, response.status, body);
-      }
-      return body;
-    } finally {
-      clearTimeout(timeout);
-    }
-  }
-  async fetchResponse(path, init = {}) {
-    const headers = new Headers(init.headers);
-    headers.set("Accept", headers.get("Accept") ?? "application/json");
-    for (const [name, value] of Object.entries(
-      await this.auth?.getHeaders() ?? {}
-    )) {
-      headers.set(name, value);
-    }
     return this.fetchFn(`${this.baseUrl}${path}`, { ...init, headers });
+  }
+  async requestWithAuthRetry(path, init, signal, canRetryAuthentication) {
+    let response;
+    try {
+      response = await this.fetchResponse(path, {
+        ...init,
+        signal
+      });
+    } catch (error) {
+      throw new MinmoTransportError(
+        error instanceof Error ? error.message : String(error),
+        error
+      );
+    }
+    const text = await response.text();
+    const body = text ? this.parseBody(text) : void 0;
+    if (!response.ok) {
+      const responseError = this.createResponseError(response, body);
+      if (response.status === 401 && canRetryAuthentication && this.auth?.invalidate) {
+        try {
+          await this.invalidateAuth();
+        } catch {
+          throw responseError;
+        }
+        return this.requestWithAuthRetry(path, init, signal, false);
+      }
+      throw responseError;
+    }
+    return body;
+  }
+  async responseWithAuthRetry(path, init, signal, canRetryAuthentication) {
+    let response;
+    try {
+      response = await this.fetchResponse(path, { ...init, signal });
+    } catch (error) {
+      throw new MinmoTransportError(
+        error instanceof Error ? error.message : String(error),
+        error
+      );
+    }
+    if (response.ok) return response;
+    const text = await response.text();
+    const body = text ? this.parseBody(text) : void 0;
+    const responseError = this.createResponseError(response, body);
+    if (response.status === 401 && canRetryAuthentication && this.auth?.invalidate) {
+      try {
+        await this.invalidateAuth();
+      } catch {
+        throw responseError;
+      }
+      return this.responseWithAuthRetry(path, init, signal, false);
+    }
+    throw responseError;
+  }
+  createResponseError(response, body) {
+    const requestId = response.headers.get("x-request-id") ?? void 0;
+    const message = typeof body === "object" && body && "message" in body ? String(body.message) : `Minmo API request failed (${response.status})`;
+    if (response.status === 401) {
+      return new MinmoAuthenticationError(
+        message,
+        response.status,
+        body,
+        requestId
+      );
+    }
+    if (response.status === 403) {
+      return new MinmoAuthorizationError(
+        message,
+        response.status,
+        body,
+        requestId
+      );
+    }
+    if (response.status === 429) {
+      return new MinmoRateLimitError(message, response.status, body, requestId);
+    }
+    return new MinmoApiError(message, response.status, body);
+  }
+  invalidateAuth() {
+    if (!this.auth?.invalidate) {
+      return Promise.resolve();
+    }
+    if (!this.authInvalidationPromise) {
+      this.authInvalidationPromise = Promise.resolve().then(() => this.auth?.invalidate?.()).finally(() => {
+        this.authInvalidationPromise = null;
+      });
+    }
+    return this.authInvalidationPromise;
   }
   parseBody(text) {
     try {
@@ -446,6 +517,154 @@ var SwapState = /* @__PURE__ */ ((SwapState2) => {
   return SwapState2;
 })(SwapState || {});
 
+// packages/core/src/types/accounting.ts
+var SourceType = /* @__PURE__ */ ((SourceType2) => {
+  SourceType2["WALLET"] = "wallet";
+  SourceType2["PSP_CONNECTION"] = "psp_connection";
+  return SourceType2;
+})(SourceType || {});
+var ExportReportType = /* @__PURE__ */ ((ExportReportType2) => {
+  ExportReportType2["TRANSACTION_HISTORY"] = "transaction_history";
+  ExportReportType2["GENERAL_LEDGER"] = "general_ledger";
+  return ExportReportType2;
+})(ExportReportType || {});
+var AccountingHealthStatus = /* @__PURE__ */ ((AccountingHealthStatus2) => {
+  AccountingHealthStatus2["READY"] = "ready";
+  AccountingHealthStatus2["NEEDS_ATTENTION"] = "needs_attention";
+  AccountingHealthStatus2["UNAVAILABLE"] = "unavailable";
+  return AccountingHealthStatus2;
+})(AccountingHealthStatus || {});
+var AccountingExportFailureCode = /* @__PURE__ */ ((AccountingExportFailureCode2) => {
+  AccountingExportFailureCode2["SOURCE_NOT_FOUND"] = "source_not_found";
+  AccountingExportFailureCode2["SOURCE_PERMISSION_DENIED"] = "source_permission_denied";
+  AccountingExportFailureCode2["SOURCE_UNAVAILABLE"] = "source_unavailable";
+  AccountingExportFailureCode2["UNSUPPORTED_REPORT_TYPE"] = "unsupported_report_type";
+  AccountingExportFailureCode2["INVALID_PERIOD"] = "invalid_period";
+  AccountingExportFailureCode2["PERIOD_TOO_LARGE"] = "period_too_large";
+  AccountingExportFailureCode2["EXPORT_TOO_LARGE"] = "export_too_large";
+  AccountingExportFailureCode2["VALUATION_INCOMPLETE"] = "valuation_incomplete";
+  AccountingExportFailureCode2["JOURNAL_INCOMPLETE"] = "journal_incomplete";
+  AccountingExportFailureCode2["JOURNAL_UNBALANCED"] = "journal_unbalanced";
+  AccountingExportFailureCode2["SOURCE_PROJECTION_FAILED"] = "source_projection_failed";
+  AccountingExportFailureCode2["GENERATION_TIMEOUT"] = "generation_timeout";
+  AccountingExportFailureCode2["CONCURRENCY_LIMIT"] = "export_concurrency_limit";
+  AccountingExportFailureCode2["DELIVERY_INTERRUPTED"] = "delivery_interrupted";
+  return AccountingExportFailureCode2;
+})(AccountingExportFailureCode || {});
+var BookEntityType = /* @__PURE__ */ ((BookEntityType2) => {
+  BookEntityType2["PARTNER"] = "partner";
+  BookEntityType2["AGENT"] = "agent";
+  return BookEntityType2;
+})(BookEntityType || {});
+var AccountType = /* @__PURE__ */ ((AccountType2) => {
+  AccountType2["ASSET"] = "asset";
+  AccountType2["LIABILITY"] = "liability";
+  AccountType2["EQUITY"] = "equity";
+  AccountType2["REVENUE"] = "revenue";
+  AccountType2["EXPENSE"] = "expense";
+  AccountType2["MEMORANDUM"] = "memorandum";
+  return AccountType2;
+})(AccountType || {});
+var AccountPurpose = /* @__PURE__ */ ((AccountPurpose2) => {
+  AccountPurpose2["WALLET_ASSET"] = "wallet_asset";
+  AccountPurpose2["WALLET_PENDING_OUTBOUND"] = "wallet_pending_outbound";
+  AccountPurpose2["WALLET_UNALLOCATED_RECEIPT"] = "wallet_unallocated_receipt";
+  AccountPurpose2["WALLET_UNCLASSIFIED_OUTFLOW"] = "wallet_unclassified_outflow";
+  AccountPurpose2["WALLET_NETWORK_FEE_EXPENSE"] = "wallet_network_fee_expense";
+  AccountPurpose2["WALLET_TRANSFER_CLEARING"] = "wallet_transfer_clearing";
+  AccountPurpose2["WALLET_RECONCILIATION_SUSPENSE"] = "wallet_reconciliation_suspense";
+  AccountPurpose2["PSP_CASH"] = "psp_cash";
+  AccountPurpose2["PSP_CLEARING"] = "psp_clearing";
+  AccountPurpose2["PSP_ENTITY_LIQUIDITY"] = "psp_entity_liquidity";
+  AccountPurpose2["PSP_PENDING_FUNDS"] = "psp_pending_funds";
+  AccountPurpose2["PSP_FEE_REVENUE"] = "psp_fee_revenue";
+  AccountPurpose2["PSP_PROVIDER_FEE_EXPENSE"] = "psp_provider_fee_expense";
+  AccountPurpose2["PSP_UNALLOCATED_FUNDS"] = "psp_unallocated_funds";
+  AccountPurpose2["PSP_RECONCILIATION_SUSPENSE"] = "psp_reconciliation_suspense";
+  return AccountPurpose2;
+})(AccountPurpose || {});
+var NormalBalance = /* @__PURE__ */ ((NormalBalance2) => {
+  NormalBalance2["DEBIT"] = "debit";
+  NormalBalance2["CREDIT"] = "credit";
+  return NormalBalance2;
+})(NormalBalance || {});
+var AccountStatus = /* @__PURE__ */ ((AccountStatus2) => {
+  AccountStatus2["ACTIVE"] = "active";
+  AccountStatus2["FROZEN"] = "frozen";
+  AccountStatus2["CLOSED"] = "closed";
+  return AccountStatus2;
+})(AccountStatus || {});
+var BalanceBasis = /* @__PURE__ */ ((BalanceBasis2) => {
+  BalanceBasis2["INTERNAL_POSTED"] = "internal_posted";
+  return BalanceBasis2;
+})(BalanceBasis || {});
+var JournalStatus = /* @__PURE__ */ ((JournalStatus2) => {
+  JournalStatus2["PENDING"] = "pending";
+  JournalStatus2["POSTED"] = "posted";
+  JournalStatus2["VOIDED"] = "voided";
+  JournalStatus2["REVERSED"] = "reversed";
+  return JournalStatus2;
+})(JournalStatus || {});
+var PostingDirection = /* @__PURE__ */ ((PostingDirection2) => {
+  PostingDirection2["DEBIT"] = "debit";
+  PostingDirection2["CREDIT"] = "credit";
+  return PostingDirection2;
+})(PostingDirection || {});
+var ExecutionStatus = /* @__PURE__ */ ((ExecutionStatus2) => {
+  ExecutionStatus2["CREATED"] = "created";
+  ExecutionStatus2["SUBMITTED"] = "submitted";
+  ExecutionStatus2["PENDING"] = "pending";
+  ExecutionStatus2["SUCCEEDED"] = "succeeded";
+  ExecutionStatus2["FAILED"] = "failed";
+  ExecutionStatus2["OUTCOME_UNKNOWN"] = "outcome_unknown";
+  ExecutionStatus2["CANCELLED"] = "cancelled";
+  return ExecutionStatus2;
+})(ExecutionStatus || {});
+var SettlementStatus = /* @__PURE__ */ ((SettlementStatus2) => {
+  SettlementStatus2["UNPOSTED"] = "unposted";
+  SettlementStatus2["RESERVED"] = "reserved";
+  SettlementStatus2["POSTED"] = "posted";
+  SettlementStatus2["REVERSED"] = "reversed";
+  return SettlementStatus2;
+})(SettlementStatus || {});
+var ReconciliationStatus = /* @__PURE__ */ ((ReconciliationStatus2) => {
+  ReconciliationStatus2["NOT_DUE"] = "not_due";
+  ReconciliationStatus2["PENDING"] = "pending";
+  ReconciliationStatus2["MATCHED"] = "matched";
+  ReconciliationStatus2["EXCEPTION"] = "exception";
+  ReconciliationStatus2["RESOLVED"] = "resolved";
+  return ReconciliationStatus2;
+})(ReconciliationStatus || {});
+var TransactionDirection = /* @__PURE__ */ ((TransactionDirection2) => {
+  TransactionDirection2["INBOUND"] = "inbound";
+  TransactionDirection2["OUTBOUND"] = "outbound";
+  TransactionDirection2["INTERNAL"] = "internal";
+  return TransactionDirection2;
+})(TransactionDirection || {});
+var TransactionOperation = /* @__PURE__ */ ((TransactionOperation2) => {
+  TransactionOperation2["RECEIVE"] = "receive";
+  TransactionOperation2["SEND"] = "send";
+  TransactionOperation2["COLLECTION"] = "collection";
+  TransactionOperation2["DISBURSEMENT"] = "disbursement";
+  TransactionOperation2["FEE"] = "fee";
+  TransactionOperation2["TRANSFER"] = "transfer";
+  return TransactionOperation2;
+})(TransactionOperation || {});
+var ValuationStatus = /* @__PURE__ */ ((ValuationStatus2) => {
+  ValuationStatus2["COMPLETE"] = "complete";
+  ValuationStatus2["INCOMPLETE"] = "incomplete";
+  ValuationStatus2["NOT_REQUIRED"] = "not_required";
+  return ValuationStatus2;
+})(ValuationStatus || {});
+var ValuationBasis = /* @__PURE__ */ ((ValuationBasis2) => {
+  ValuationBasis2["EXECUTION_TIME"] = "execution_time";
+  ValuationBasis2["PROVIDER_OCCURRED_TIME"] = "provider_occurred_time";
+  ValuationBasis2["FIRST_OBSERVED_TIME"] = "first_observed_time";
+  ValuationBasis2["HISTORICAL_BACKFILL"] = "historical_backfill";
+  ValuationBasis2["IDENTITY"] = "identity";
+  return ValuationBasis2;
+})(ValuationBasis || {});
+
 // packages/core/src/types/currency.ts
 var Currency = /* @__PURE__ */ ((Currency2) => {
   Currency2["BTC"] = "BTC";
@@ -505,6 +724,129 @@ var AnalyticsBucket = /* @__PURE__ */ ((AnalyticsBucket2) => {
   return AnalyticsBucket2;
 })(AnalyticsBucket || {});
 
+// packages/core/src/types/psp.ts
+var PspProvider = /* @__PURE__ */ ((PspProvider2) => {
+  PspProvider2["SAFARICOM_DARAJA"] = "safaricom_daraja";
+  return PspProvider2;
+})(PspProvider || {});
+var PspEnvironment = /* @__PURE__ */ ((PspEnvironment2) => {
+  PspEnvironment2["SANDBOX"] = "sandbox";
+  PspEnvironment2["PRODUCTION"] = "production";
+  return PspEnvironment2;
+})(PspEnvironment || {});
+var PspConnectionKind = /* @__PURE__ */ ((PspConnectionKind2) => {
+  PspConnectionKind2["OWNER"] = "owner";
+  PspConnectionKind2["DELEGATED"] = "delegated";
+  return PspConnectionKind2;
+})(PspConnectionKind || {});
+var PspEntityType = /* @__PURE__ */ ((PspEntityType2) => {
+  PspEntityType2["PARTNER"] = "partner";
+  PspEntityType2["AGENT"] = "agent";
+  return PspEntityType2;
+})(PspEntityType || {});
+var PspConnectionStatus = /* @__PURE__ */ ((PspConnectionStatus2) => {
+  PspConnectionStatus2["DRAFT"] = "draft";
+  PspConnectionStatus2["ACTIVE"] = "active";
+  PspConnectionStatus2["SUSPENDED"] = "suspended";
+  PspConnectionStatus2["REVOKED"] = "revoked";
+  return PspConnectionStatus2;
+})(PspConnectionStatus || {});
+var PspCapability = /* @__PURE__ */ ((PspCapability2) => {
+  PspCapability2["COLLECTION_CREATE"] = "collection_create";
+  PspCapability2["DISBURSEMENT_CREATE"] = "disbursement_create";
+  PspCapability2["PAYMENT_READ"] = "payment_read";
+  PspCapability2["WEBHOOK_RECEIVE"] = "webhook_receive";
+  return PspCapability2;
+})(PspCapability || {});
+var PspPaymentMethod = /* @__PURE__ */ ((PspPaymentMethod2) => {
+  PspPaymentMethod2["DARAJA_STK_PUSH"] = "daraja_stk_push";
+  PspPaymentMethod2["DARAJA_SEND_MONEY"] = "daraja_send_money";
+  PspPaymentMethod2["DARAJA_BUY_GOODS"] = "daraja_buy_goods";
+  PspPaymentMethod2["DARAJA_PAYBILL"] = "daraja_paybill";
+  return PspPaymentMethod2;
+})(PspPaymentMethod || {});
+var PspCallbackMode = /* @__PURE__ */ ((PspCallbackMode2) => {
+  PspCallbackMode2["OPAQUE_ENDPOINT"] = "opaque_endpoint";
+  return PspCallbackMode2;
+})(PspCallbackMode || {});
+var PspProviderSetupFieldType = /* @__PURE__ */ ((PspProviderSetupFieldType2) => {
+  PspProviderSetupFieldType2["TEXT"] = "text";
+  PspProviderSetupFieldType2["SECRET"] = "secret";
+  return PspProviderSetupFieldType2;
+})(PspProviderSetupFieldType || {});
+var PspAccountingTemplate = /* @__PURE__ */ ((PspAccountingTemplate2) => {
+  PspAccountingTemplate2["DARAJA_COLLECTION_CLEARING_TO_PENDING_ENTITY_V1"] = "daraja_collection_clearing_to_pending_entity_v1";
+  PspAccountingTemplate2["DARAJA_DISBURSEMENT_PENDING_ENTITY_TO_CLEARING_V1"] = "daraja_disbursement_pending_entity_to_clearing_v1";
+  return PspAccountingTemplate2;
+})(PspAccountingTemplate || {});
+var PspDisbursementDestinationType = /* @__PURE__ */ ((PspDisbursementDestinationType2) => {
+  PspDisbursementDestinationType2["MOBILE_WALLET"] = "mobile_wallet";
+  PspDisbursementDestinationType2["MERCHANT_ACCOUNT"] = "merchant_account";
+  PspDisbursementDestinationType2["BILL_ACCOUNT"] = "bill_account";
+  return PspDisbursementDestinationType2;
+})(PspDisbursementDestinationType || {});
+var PspPaymentOperation = /* @__PURE__ */ ((PspPaymentOperation2) => {
+  PspPaymentOperation2["COLLECTION"] = "collection";
+  PspPaymentOperation2["DISBURSEMENT"] = "disbursement";
+  return PspPaymentOperation2;
+})(PspPaymentOperation || {});
+var PspProviderBalanceStatus = /* @__PURE__ */ ((PspProviderBalanceStatus2) => {
+  PspProviderBalanceStatus2["UNAVAILABLE"] = "unavailable";
+  return PspProviderBalanceStatus2;
+})(PspProviderBalanceStatus || {});
+var PspReconciliationType = /* @__PURE__ */ ((PspReconciliationType2) => {
+  PspReconciliationType2["TRANSACTION"] = "transaction";
+  PspReconciliationType2["BALANCE"] = "balance";
+  return PspReconciliationType2;
+})(PspReconciliationType || {});
+var PspReconciliationRecordKind = /* @__PURE__ */ ((PspReconciliationRecordKind2) => {
+  PspReconciliationRecordKind2["RUN"] = "run";
+  PspReconciliationRecordKind2["ITEM"] = "item";
+  return PspReconciliationRecordKind2;
+})(PspReconciliationRecordKind || {});
+var PspReconciliationStatus = /* @__PURE__ */ ((PspReconciliationStatus2) => {
+  PspReconciliationStatus2["PENDING"] = "pending";
+  PspReconciliationStatus2["MATCHED"] = "matched";
+  PspReconciliationStatus2["EXCEPTION"] = "exception";
+  PspReconciliationStatus2["RESOLVED"] = "resolved";
+  return PspReconciliationStatus2;
+})(PspReconciliationStatus || {});
+var PspReconciliationExceptionCode = /* @__PURE__ */ ((PspReconciliationExceptionCode2) => {
+  PspReconciliationExceptionCode2["MISSING_PROVIDER_EVIDENCE"] = "missing_provider_evidence";
+  PspReconciliationExceptionCode2["UNMATCHED_PROVIDER_TRANSACTION"] = "unmatched_provider_transaction";
+  PspReconciliationExceptionCode2["CONFLICTING_PROVIDER_OUTCOME"] = "conflicting_provider_outcome";
+  PspReconciliationExceptionCode2["UNRESOLVED_PROVIDER_OUTCOME"] = "unresolved_provider_outcome";
+  PspReconciliationExceptionCode2["PAYMENT_STATUS_MISMATCH"] = "payment_status_mismatch";
+  PspReconciliationExceptionCode2["AMOUNT_MISMATCH"] = "amount_mismatch";
+  PspReconciliationExceptionCode2["CURRENCY_MISMATCH"] = "currency_mismatch";
+  PspReconciliationExceptionCode2["MISSING_RECOGNITION_JOURNAL"] = "missing_recognition_journal";
+  PspReconciliationExceptionCode2["ACCOUNTING_SCOPE_MISMATCH"] = "accounting_scope_mismatch";
+  return PspReconciliationExceptionCode2;
+})(PspReconciliationExceptionCode || {});
+var PspReconciliationResolutionAction = /* @__PURE__ */ ((PspReconciliationResolutionAction2) => {
+  PspReconciliationResolutionAction2["CONFIRM_EXISTING_MATCH"] = "confirm_existing_match";
+  PspReconciliationResolutionAction2["LINK_PAYMENT"] = "link_payment";
+  PspReconciliationResolutionAction2["RECORD_ACCOUNTING_CORRECTION"] = "record_accounting_correction";
+  return PspReconciliationResolutionAction2;
+})(PspReconciliationResolutionAction || {});
+var PspEventType = /* @__PURE__ */ ((PspEventType2) => {
+  PspEventType2["CONNECTION_CREATED"] = "psp.connection.created";
+  PspEventType2["CONNECTION_ACTIVATED"] = "psp.connection.activated";
+  PspEventType2["CONNECTION_SUSPENDED"] = "psp.connection.suspended";
+  PspEventType2["CONNECTION_REVOKED"] = "psp.connection.revoked";
+  PspEventType2["PAYMENT_CREATED"] = "psp.payment.created";
+  PspEventType2["PAYMENT_SUBMITTED"] = "psp.payment.submitted";
+  PspEventType2["PAYMENT_PENDING"] = "psp.payment.pending";
+  PspEventType2["PAYMENT_SUCCEEDED"] = "psp.payment.succeeded";
+  PspEventType2["PAYMENT_FAILED"] = "psp.payment.failed";
+  PspEventType2["PAYMENT_OUTCOME_UNKNOWN"] = "psp.payment.outcome.unknown";
+  PspEventType2["PAYMENT_CANCELLED"] = "psp.payment.cancelled";
+  PspEventType2["RECONCILIATION_COMPLETED"] = "psp.reconciliation.completed";
+  PspEventType2["RECONCILIATION_EXCEPTION_DETECTED"] = "psp.reconciliation.exception.detected";
+  PspEventType2["RECONCILIATION_EXCEPTION_RESOLVED"] = "psp.reconciliation.exception.resolved";
+  return PspEventType2;
+})(PspEventType || {});
+
 // packages/core/src/types/events.ts
 var OtcEventType = /* @__PURE__ */ ((OtcEventType2) => {
   OtcEventType2["SWAP_CREATED"] = "otc.swap.created";
@@ -553,6 +895,9 @@ var PayEventType = /* @__PURE__ */ ((PayEventType2) => {
 })(PayEventType || {});
 var WalletEventType = /* @__PURE__ */ ((WalletEventType2) => {
   WalletEventType2["SYNCED"] = "wallet.synced";
+  WalletEventType2["DEPOSITS_DISCOVERED"] = "wallet.deposits.discovered";
+  WalletEventType2["DEPOSITS_UNCLAIMED"] = "wallet.deposits.unclaimed";
+  WalletEventType2["DEPOSITS_CLAIMED"] = "wallet.deposits.claimed";
   WalletEventType2["PAYMENT_PENDING"] = "wallet.payment.pending";
   WalletEventType2["PAYMENT_SUCCEEDED"] = "wallet.payment.succeeded";
   WalletEventType2["PAYMENT_FAILED"] = "wallet.payment.failed";
@@ -571,7 +916,8 @@ var MINMO_EVENT_TYPES = [
   ...Object.values(OtcEventType),
   ...Object.values(PayEventType),
   ...Object.values(WalletEventType),
-  ...Object.values(EscrowEventType)
+  ...Object.values(EscrowEventType),
+  ...Object.values(PspEventType)
 ];
 
 // packages/core/src/types/rates.ts
@@ -617,6 +963,7 @@ var Permission = /* @__PURE__ */ ((Permission2) => {
   Permission2["ESCROW_CREATE"] = "escrow:create";
   Permission2["ESCROW_READ"] = "escrow:read";
   Permission2["ESCROW_VERIFY_FUNDING"] = "escrow:verify_funding";
+  Permission2["ESCROW_EXPIRE"] = "escrow:expire";
   Permission2["ESCROW_RELEASE"] = "escrow:release";
   Permission2["ESCROW_REFUND"] = "escrow:refund";
   Permission2["ESCROW_RESOLVE_DISPUTE"] = "escrow:resolve_dispute";
@@ -636,6 +983,7 @@ var Permission = /* @__PURE__ */ ((Permission2) => {
   Permission2["PARTNER_AGENT_MANAGE"] = "partner:agent_manage";
   Permission2["PARTNER_AGENTS_READ"] = "partner:agents_read";
   Permission2["PARTNER_SWAPS_READ"] = "partner:swaps_read";
+  Permission2["PARTNER_SWAPS_MANAGE"] = "partner:swaps_manage";
   Permission2["PARTNER_LIQUIDITY_READ"] = "partner:liquidity_read";
   Permission2["PARTNER_METRICS_READ"] = "partner:metrics_read";
   Permission2["PARTNER_SERVICES_CREATE"] = "partner:services_create";
@@ -648,6 +996,19 @@ var Permission = /* @__PURE__ */ ((Permission2) => {
   Permission2["PAY_EVENT_SUBSCRIBE"] = "pay:event_subscribe";
   Permission2["PAY_STORE_READ"] = "pay:store_read";
   Permission2["PAY_STORE_MANAGE"] = "pay:store_manage";
+  Permission2["PSP_CONNECTION_READ"] = "psp:connection_read";
+  Permission2["PSP_CONNECTION_MANAGE"] = "psp:connection_manage";
+  Permission2["PSP_PAYMENT_CREATE"] = "psp:payment_create";
+  Permission2["PSP_DISBURSEMENT_CREATE"] = "psp:disbursement_create";
+  Permission2["PSP_PAYMENT_READ"] = "psp:payment_read";
+  Permission2["PSP_ACCOUNT_READ"] = "psp:account_read";
+  Permission2["PSP_EVENT_SUBSCRIBE"] = "psp:event_subscribe";
+  Permission2["PSP_RECONCILIATION_READ"] = "psp:reconciliation_read";
+  Permission2["PSP_RECONCILIATION_RUN"] = "psp:reconciliation_run";
+  Permission2["PSP_RECONCILIATION_RESOLVE"] = "psp:reconciliation_resolve";
+  Permission2["ACCOUNTING_READ"] = "accounting:read";
+  Permission2["ACCOUNTING_TEMPLATE_MANAGE"] = "accounting:template_manage";
+  Permission2["ACCOUNTING_EXPORT"] = "accounting:export";
   return Permission2;
 })(Permission || {});
 var PERMISSION_GROUPS = {
@@ -669,6 +1030,7 @@ var PERMISSION_GROUPS = {
     "escrow:create" /* ESCROW_CREATE */,
     "escrow:read" /* ESCROW_READ */,
     "escrow:verify_funding" /* ESCROW_VERIFY_FUNDING */,
+    "escrow:expire" /* ESCROW_EXPIRE */,
     "escrow:release" /* ESCROW_RELEASE */,
     "escrow:refund" /* ESCROW_REFUND */,
     "escrow:resolve_dispute" /* ESCROW_RESOLVE_DISPUTE */,
@@ -714,6 +1076,7 @@ var PERMISSION_GROUPS = {
     "partner:agent_manage" /* PARTNER_AGENT_MANAGE */,
     "partner:agents_read" /* PARTNER_AGENTS_READ */,
     "partner:swaps_read" /* PARTNER_SWAPS_READ */,
+    "partner:swaps_manage" /* PARTNER_SWAPS_MANAGE */,
     "partner:liquidity_read" /* PARTNER_LIQUIDITY_READ */,
     "partner:metrics_read" /* PARTNER_METRICS_READ */,
     "partner:services_create" /* PARTNER_SERVICES_CREATE */,
@@ -732,6 +1095,23 @@ var PERMISSION_GROUPS = {
     "pay:event_subscribe" /* PAY_EVENT_SUBSCRIBE */,
     "pay:store_read" /* PAY_STORE_READ */,
     "pay:store_manage" /* PAY_STORE_MANAGE */
+  ],
+  PSP_OPERATIONS: [
+    "psp:connection_read" /* PSP_CONNECTION_READ */,
+    "psp:connection_manage" /* PSP_CONNECTION_MANAGE */,
+    "psp:payment_create" /* PSP_PAYMENT_CREATE */,
+    "psp:disbursement_create" /* PSP_DISBURSEMENT_CREATE */,
+    "psp:payment_read" /* PSP_PAYMENT_READ */,
+    "psp:account_read" /* PSP_ACCOUNT_READ */,
+    "psp:event_subscribe" /* PSP_EVENT_SUBSCRIBE */,
+    "psp:reconciliation_read" /* PSP_RECONCILIATION_READ */,
+    "psp:reconciliation_run" /* PSP_RECONCILIATION_RUN */,
+    "psp:reconciliation_resolve" /* PSP_RECONCILIATION_RESOLVE */
+  ],
+  ACCOUNTING_OPERATIONS: [
+    "accounting:read" /* ACCOUNTING_READ */,
+    "accounting:template_manage" /* ACCOUNTING_TEMPLATE_MANAGE */,
+    "accounting:export" /* ACCOUNTING_EXPORT */
   ]
 };
 var ROLE_PERMISSIONS = {
@@ -749,13 +1129,16 @@ var ROLE_PERMISSIONS = {
     ...PERMISSION_GROUPS.ANALYTICS,
     ...PERMISSION_GROUPS.PARTNER_OPERATIONS,
     ...PERMISSION_GROUPS.PARTNER_ADMIN_OPERATIONS,
-    ...PERMISSION_GROUPS.PAY_OPERATIONS
+    ...PERMISSION_GROUPS.PAY_OPERATIONS,
+    ...PERMISSION_GROUPS.PSP_OPERATIONS,
+    ...PERMISSION_GROUPS.ACCOUNTING_OPERATIONS
   ],
   // Group Roles (assigned via Hexclave team/RBAC membership)
   ["team_admin" /* TEAM_ADMIN */]: [
     // Core agent operations
     "agent:register" /* AGENT_REGISTER */,
     "agent:manage_own" /* AGENT_MANAGE_OWN */,
+    "bitcoin:wallet_read" /* BITCOIN_WALLET_READ */,
     // Transaction operations
     "swap:create" /* SWAP_CREATE */,
     "swap:read_own" /* SWAP_READ_OWN */,
@@ -767,13 +1150,17 @@ var ROLE_PERMISSIONS = {
     // Analytics
     "reports:read_all" /* ANALYTICS_READ_ALL */,
     // Partner-specific tenant-level permissions
-    ...PERMISSION_GROUPS.PARTNER_OPERATIONS
+    ...PERMISSION_GROUPS.PARTNER_OPERATIONS,
+    // Minmo Pay operations scoped to the administered team
+    ...PERMISSION_GROUPS.PAY_OPERATIONS,
+    ...PERMISSION_GROUPS.PSP_OPERATIONS,
+    ...PERMISSION_GROUPS.ACCOUNTING_OPERATIONS
   ],
   ["team_member" /* TEAM_MEMBER */]: [
     // Console/product visibility for assigned teams
     "agent:register" /* AGENT_REGISTER */,
     "agent:manage_own" /* AGENT_MANAGE_OWN */,
-    "swap:create" /* SWAP_CREATE */,
+    "bitcoin:wallet_read" /* BITCOIN_WALLET_READ */,
     "swap:read_own" /* SWAP_READ_OWN */,
     "liquidity:manage_own" /* LIQUIDITY_MANAGE_OWN */,
     "fx:rates_read" /* FX_RATES_READ */,
@@ -783,7 +1170,16 @@ var ROLE_PERMISSIONS = {
     "partner:swaps_read" /* PARTNER_SWAPS_READ */,
     "partner:liquidity_read" /* PARTNER_LIQUIDITY_READ */,
     "partner:metrics_read" /* PARTNER_METRICS_READ */,
-    "partner:services_read" /* PARTNER_SERVICES_READ */
+    "partner:services_read" /* PARTNER_SERVICES_READ */,
+    "pay:store_read" /* PAY_STORE_READ */,
+    "pay:payment_read" /* PAY_PAYMENT_READ */,
+    "pay:event_subscribe" /* PAY_EVENT_SUBSCRIBE */,
+    "psp:connection_read" /* PSP_CONNECTION_READ */,
+    "psp:payment_read" /* PSP_PAYMENT_READ */,
+    "psp:account_read" /* PSP_ACCOUNT_READ */,
+    "psp:event_subscribe" /* PSP_EVENT_SUBSCRIBE */,
+    "psp:reconciliation_read" /* PSP_RECONCILIATION_READ */,
+    "accounting:read" /* ACCOUNTING_READ */
   ],
   ["minmo_partner" /* MINMO_PARTNER */]: [
     // Agent read access for dashboard visibility
@@ -836,6 +1232,19 @@ var ConfirmationRole = /* @__PURE__ */ ((ConfirmationRole2) => {
   ConfirmationRole2["AGENT"] = "agent";
   return ConfirmationRole2;
 })(ConfirmationRole || {});
+
+// packages/core/src/types/referral.ts
+var ReferralCodeScope = /* @__PURE__ */ ((ReferralCodeScope2) => {
+  ReferralCodeScope2["SYSTEM"] = "system";
+  ReferralCodeScope2["TEAM"] = "team";
+  return ReferralCodeScope2;
+})(ReferralCodeScope || {});
+var ReferralCodeUse = /* @__PURE__ */ ((ReferralCodeUse2) => {
+  ReferralCodeUse2["AGENT_INVITE"] = "agent_invite";
+  ReferralCodeUse2["PARTNER_MEMBER_SIGNUP"] = "partner_member_signup";
+  return ReferralCodeUse2;
+})(ReferralCodeUse || {});
+var ALL_REFERRAL_CODE_USES = Object.values(ReferralCodeUse);
 
 // packages/core/src/types/pay.ts
 var PayStoreStatus = /* @__PURE__ */ ((PayStoreStatus2) => {
@@ -894,12 +1303,16 @@ var ApiKeyCapability = /* @__PURE__ */ ((ApiKeyCapability2) => {
   ApiKeyCapability2["ESCROW_ADMIN"] = "escrow.admin";
   ApiKeyCapability2["PAY_READONLY"] = "pay.readonly";
   ApiKeyCapability2["PAY_READ_WRITE"] = "pay.read_write";
+  ApiKeyCapability2["PSP_READONLY"] = "psp.readonly";
+  ApiKeyCapability2["PSP_COLLECTIONS"] = "psp.collections";
+  ApiKeyCapability2["PSP_DISBURSEMENTS"] = "psp.disbursements";
   return ApiKeyCapability2;
 })(ApiKeyCapability || {});
 var API_KEY_CAPABILITY_PERMISSIONS = {
   ["swap.readonly" /* SWAP_READONLY */]: [
     "agent:read_all" /* AGENT_READ_ALL */,
     "swap:read_all" /* SWAP_READ_ALL */,
+    "partner:swaps_read" /* PARTNER_SWAPS_READ */,
     "fx:rates_read" /* FX_RATES_READ */
   ],
   ["swap.read_write" /* SWAP_READ_WRITE */]: [
@@ -907,11 +1320,14 @@ var API_KEY_CAPABILITY_PERMISSIONS = {
     "swap:read_all" /* SWAP_READ_ALL */,
     "swap:create" /* SWAP_CREATE */,
     "swap:cancel_all" /* SWAP_CANCEL_ALL */,
+    "partner:swaps_read" /* PARTNER_SWAPS_READ */,
+    "partner:swaps_manage" /* PARTNER_SWAPS_MANAGE */,
     "fx:rates_read" /* FX_RATES_READ */
   ],
   ["team.readonly" /* TEAM_READONLY */]: [
     "agent:read_all" /* AGENT_READ_ALL */,
     "swap:read_all" /* SWAP_READ_ALL */,
+    "partner:swaps_read" /* PARTNER_SWAPS_READ */,
     "liquidity:read_all" /* LIQUIDITY_READ_ALL */,
     "fx:rates_read" /* FX_RATES_READ */,
     "reports:read_all" /* ANALYTICS_READ_ALL */
@@ -922,6 +1338,8 @@ var API_KEY_CAPABILITY_PERMISSIONS = {
     "swap:read_all" /* SWAP_READ_ALL */,
     "swap:create" /* SWAP_CREATE */,
     "swap:cancel_all" /* SWAP_CANCEL_ALL */,
+    "partner:swaps_read" /* PARTNER_SWAPS_READ */,
+    "partner:swaps_manage" /* PARTNER_SWAPS_MANAGE */,
     "liquidity:read_all" /* LIQUIDITY_READ_ALL */,
     "liquidity:manage_all" /* LIQUIDITY_MANAGE_ALL */,
     "fx:rates_read" /* FX_RATES_READ */,
@@ -932,6 +1350,7 @@ var API_KEY_CAPABILITY_PERMISSIONS = {
     "escrow:create" /* ESCROW_CREATE */,
     "escrow:read" /* ESCROW_READ */,
     "escrow:verify_funding" /* ESCROW_VERIFY_FUNDING */,
+    "escrow:expire" /* ESCROW_EXPIRE */,
     "escrow:release" /* ESCROW_RELEASE */,
     "escrow:refund" /* ESCROW_REFUND */,
     "escrow:resolve_dispute" /* ESCROW_RESOLVE_DISPUTE */
@@ -949,6 +1368,27 @@ var API_KEY_CAPABILITY_PERMISSIONS = {
     "pay:payment_create" /* PAY_PAYMENT_CREATE */,
     "pay:payment_cancel" /* PAY_PAYMENT_CANCEL */,
     "pay:event_subscribe" /* PAY_EVENT_SUBSCRIBE */
+  ],
+  ["psp.readonly" /* PSP_READONLY */]: [
+    "psp:connection_read" /* PSP_CONNECTION_READ */,
+    "psp:payment_read" /* PSP_PAYMENT_READ */,
+    "psp:account_read" /* PSP_ACCOUNT_READ */,
+    "psp:event_subscribe" /* PSP_EVENT_SUBSCRIBE */,
+    "psp:reconciliation_read" /* PSP_RECONCILIATION_READ */
+  ],
+  ["psp.collections" /* PSP_COLLECTIONS */]: [
+    "psp:connection_read" /* PSP_CONNECTION_READ */,
+    "psp:payment_read" /* PSP_PAYMENT_READ */,
+    "psp:payment_create" /* PSP_PAYMENT_CREATE */,
+    "psp:event_subscribe" /* PSP_EVENT_SUBSCRIBE */,
+    "psp:reconciliation_read" /* PSP_RECONCILIATION_READ */
+  ],
+  ["psp.disbursements" /* PSP_DISBURSEMENTS */]: [
+    "psp:connection_read" /* PSP_CONNECTION_READ */,
+    "psp:payment_read" /* PSP_PAYMENT_READ */,
+    "psp:disbursement_create" /* PSP_DISBURSEMENT_CREATE */,
+    "psp:event_subscribe" /* PSP_EVENT_SUBSCRIBE */,
+    "psp:reconciliation_read" /* PSP_RECONCILIATION_READ */
   ]
 };
 
@@ -1010,9 +1450,21 @@ var EscrowDisputesClient = class {
   list() {
     return this.http.request("/swap/disputed");
   }
+  /** Lists disputes in one explicitly authorized Partner. */
+  listForPartner(partnerId) {
+    return this.http.request(
+      `/teams/${segment(partnerId)}/swaps/disputed`
+    );
+  }
   /** Reads the authoritative swap resource containing the dispute. */
   get(swapId) {
     return this.http.request(`/swap/${segment(swapId)}`);
+  }
+  /** Reads a dispute after enforcing access to its Partner scope. */
+  getForPartner(partnerId, swapId) {
+    return this.http.request(
+      `/teams/${segment(partnerId)}/swaps/${segment(swapId)}/dispute`
+    );
   }
   /** Opens a dispute as an authorized swap participant. */
   open(swapId, input) {
@@ -1035,6 +1487,13 @@ var EscrowDisputesClient = class {
   resolve(swapId, input) {
     return this.http.request(
       `/swap/${segment(swapId)}/resolve-dispute`,
+      { method: "PATCH", body: JSON.stringify(input) }
+    );
+  }
+  /** Records a dispute decision inside one explicitly authorized Partner. */
+  resolveForPartner(partnerId, swapId, input) {
+    return this.http.request(
+      `/teams/${segment(partnerId)}/swaps/${segment(swapId)}/dispute-resolution`,
       { method: "PATCH", body: JSON.stringify(input) }
     );
   }
@@ -1087,11 +1546,19 @@ var EscrowClient = class {
   }
   list(teamId, query = {}) {
     const params = new URLSearchParams();
-    if (query.limit !== void 0) params.set("limit", String(query.limit));
-    if (query.offset !== void 0) params.set("offset", String(query.offset));
+    appendEscrowListQuery(params, query);
     const suffix = params.toString() ? `?${params}` : "";
     return this.http.request(
       `/teams/${segment2(teamId)}/escrows${suffix}`
+    );
+  }
+  activity(teamId, query = {}) {
+    const params = new URLSearchParams();
+    appendEscrowListQuery(params, query.open ?? {}, "open");
+    appendEscrowListQuery(params, query.history ?? {}, "history");
+    const suffix = params.toString() ? `?${params}` : "";
+    return this.http.request(
+      `/teams/${segment2(teamId)}/escrows/activity${suffix}`
     );
   }
   get(teamId, reference) {
@@ -1112,6 +1579,12 @@ var EscrowClient = class {
   verifyFunding(teamId, reference) {
     return this.http.request(
       `/teams/${segment2(teamId)}/escrows/${segment2(reference)}/funding/verify`,
+      { method: "POST" }
+    );
+  }
+  expireUnfunded(teamId, reference) {
+    return this.http.request(
+      `/teams/${segment2(teamId)}/escrows/${segment2(reference)}/expire`,
       { method: "POST" }
     );
   }
@@ -1208,6 +1681,17 @@ var EscrowClient = class {
     );
   }
 };
+function appendEscrowListQuery(params, query, prefix = "") {
+  const name = (field) => prefix ? `${prefix}${field[0].toUpperCase()}${field.slice(1)}` : field;
+  if (query.limit !== void 0) params.set(name("limit"), String(query.limit));
+  if (query.offset !== void 0)
+    params.set(name("offset"), String(query.offset));
+  if (query.statuses?.length)
+    params.set(name("statuses"), query.statuses.join(","));
+  if (query.reference) params.set(name("reference"), query.reference);
+  if (query.terminal !== void 0)
+    params.set(name("terminal"), String(query.terminal));
+}
 
 // packages/sdk/src/otc/agents.ts
 function queryString2(query) {
@@ -1351,7 +1835,8 @@ var RatesClient = class {
       agentId,
       baseCurrency: request.baseCurrency,
       fiatCurrency: request.targetCurrency,
-      ...request.amount ? { amount: request.amount } : {}
+      ...request.amount ? { fiatAmount: request.amount } : {},
+      ...request.type ? { type: request.type } : {}
     });
     return this.http.request(`/swap/quote?${params}`);
   }
@@ -1394,6 +1879,14 @@ var SwapClient = class {
   constructor(http) {
     this.http = http;
   }
+  listPath(path, query) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) {
+      if (value !== void 0) params.set(key, String(value));
+    }
+    const suffix = params.toString() ? `?${params}` : "";
+    return `${path}${suffix}`;
+  }
   create(input) {
     return this.http.request("/swap", {
       method: "POST",
@@ -1409,12 +1902,22 @@ var SwapClient = class {
     return this.http.request("/swap/disputed");
   }
   list(query = {}) {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(query)) {
-      if (value !== void 0) params.set(key, String(value));
-    }
-    const suffix = params.toString() ? `?${params}` : "";
-    return this.http.request(`/swap${suffix}`);
+    return this.http.request(this.listPath("/swap", query));
+  }
+  listForPartner(partnerId, query = {}) {
+    const path = `/teams/${encodeURIComponent(partnerId)}/swaps`;
+    return this.http.request(this.listPath(path, query));
+  }
+  getForPartner(partnerId, swapId) {
+    return this.http.request(
+      `/teams/${encodeURIComponent(partnerId)}/swaps/${encodeURIComponent(swapId)}`
+    );
+  }
+  cancelForPartner(partnerId, swapId, input = {}) {
+    return this.http.request(
+      `/teams/${encodeURIComponent(partnerId)}/swaps/${encodeURIComponent(swapId)}/cancel`,
+      { method: "PATCH", body: JSON.stringify(input) }
+    );
   }
   claim(swapId, input = {}) {
     return this.http.request(
@@ -1626,10 +2129,226 @@ var PayStoreResource = class {
   }
 };
 
-// packages/sdk/src/partner.ts
+// packages/sdk/src/psp.ts
 var segment4 = (value) => encodeURIComponent(value);
-var partnerPath = (partnerId, suffix = "") => `/teams/${segment4(partnerId)}${suffix}`;
 var requiredId = (value, label) => {
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`${label} is required`);
+  return normalized;
+};
+var PspClient = class {
+  constructor(http, eventsClient, partnerId) {
+    this.http = http;
+    this.eventsClient = eventsClient;
+    this.partnerId = partnerId;
+  }
+  /** Subscribes to PSP lifecycle events in this Partner scope. */
+  events(options) {
+    const { eventTypes, ...subscriptionOptions } = options;
+    return subscribeToDomainEvents(
+      this.eventsClient,
+      "psp",
+      eventTypes ?? Object.values(PspEventType),
+      {
+        ...subscriptionOptions,
+        partnerId: this.partnerId,
+        streamKey: options.streamKey ?? JSON.stringify({
+          domain: "psp",
+          partnerId: this.partnerId,
+          aggregateId: options.aggregateId,
+          eventTypes
+        })
+      }
+    );
+  }
+  async listProviders() {
+    return this.http.request(
+      `${this.path()}/providers`
+    );
+  }
+  async getProvider(provider) {
+    return this.http.request(
+      `${this.path()}/providers/${segment4(provider)}`
+    );
+  }
+  async listConnections() {
+    return this.http.request(
+      `${this.path()}/connections`
+    );
+  }
+  async getConnection(connectionId) {
+    return this.http.request(
+      `${this.path()}/connections/${segment4(requiredId(connectionId, "PSP connection ID"))}`
+    );
+  }
+  async createConnection(input) {
+    return this.http.request(
+      `${this.path()}/connections`,
+      {
+        method: "POST",
+        body: JSON.stringify(input)
+      }
+    );
+  }
+  async activateConnection(connectionId) {
+    return this.http.request(
+      `${this.path()}/connections/${segment4(requiredId(connectionId, "PSP connection ID"))}/activate`,
+      { method: "POST" }
+    );
+  }
+  async rotateCredentials(connectionId, input) {
+    return this.http.request(
+      `${this.path()}/connections/${segment4(requiredId(connectionId, "PSP connection ID"))}/credentials`,
+      { method: "PUT", body: JSON.stringify(input) }
+    );
+  }
+  async createDelegation(ownerConnectionId, input) {
+    return this.http.request(
+      `${this.path()}/connections/${segment4(requiredId(ownerConnectionId, "PSP owner connection ID"))}/delegations`,
+      { method: "POST", body: JSON.stringify(input) }
+    );
+  }
+  async revokeDelegation(connectionId, input) {
+    return this.http.request(
+      `${this.path()}/connections/${segment4(requiredId(connectionId, "PSP connection ID"))}/revoke`,
+      { method: "POST", body: JSON.stringify(input) }
+    );
+  }
+  async createCollection(connectionId, input, idempotencyKey) {
+    const normalizedIdempotencyKey = requiredId(
+      idempotencyKey,
+      "Idempotency key"
+    );
+    return this.http.request(
+      `${this.path()}/connections/${segment4(requiredId(connectionId, "PSP connection ID"))}/collections`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+        headers: { "Idempotency-Key": normalizedIdempotencyKey }
+      }
+    );
+  }
+  async createDisbursement(connectionId, input, idempotencyKey) {
+    const normalizedIdempotencyKey = requiredId(
+      idempotencyKey,
+      "Idempotency key"
+    );
+    return this.http.request(
+      `${this.path()}/connections/${segment4(requiredId(connectionId, "PSP connection ID"))}/disbursements`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+        headers: { "Idempotency-Key": normalizedIdempotencyKey }
+      }
+    );
+  }
+  async getPayment(paymentId) {
+    return this.http.request(
+      `${this.path()}/payments/${segment4(requiredId(paymentId, "PSP payment ID"))}`
+    );
+  }
+  async listPayments(input = {}) {
+    return this.http.request(
+      `${this.path()}/payments${paymentQuery(input)}`
+    );
+  }
+  async listAccounts(input = {}) {
+    return this.http.request(
+      `${this.path()}/accounts${pageQuery(input)}`
+    );
+  }
+  async getAccount(accountId) {
+    return this.http.request(
+      `${this.path()}/accounts/${segment4(requiredId(accountId, "PSP account ID"))}`
+    );
+  }
+  async listLiquidity(input = {}) {
+    return this.http.request(
+      `${this.path()}/liquidity${liquidityQuery(input)}`
+    );
+  }
+  async getAccountStatement(accountId, input = {}) {
+    return this.http.request(
+      `${this.path()}/accounts/${segment4(requiredId(accountId, "PSP account ID"))}/statement${pageQuery(input)}`
+    );
+  }
+  async createReconciliation(input) {
+    return this.http.request(
+      `${this.path()}/reconciliations`,
+      { method: "POST", body: JSON.stringify(input) }
+    );
+  }
+  async listReconciliations(input = {}) {
+    return this.http.request(`${this.path()}/reconciliations${pageQuery(input)}`);
+  }
+  async getReconciliation(reconciliationId) {
+    return this.http.request(
+      `${this.path()}/reconciliations/${segment4(requiredId(reconciliationId, "PSP reconciliation ID"))}`
+    );
+  }
+  async listReconciliationItems(reconciliationId, input = {}) {
+    return this.http.request(
+      `${this.path()}/reconciliations/${segment4(requiredId(reconciliationId, "PSP reconciliation ID"))}/items${pageQuery(input)}`
+    );
+  }
+  async listReconciliationExceptions(reconciliationId, input = {}) {
+    return this.http.request(
+      `${this.path()}/reconciliations/${segment4(requiredId(reconciliationId, "PSP reconciliation ID"))}/exceptions${pageQuery(input)}`
+    );
+  }
+  async resolveReconciliationItem(reconciliationId, itemId, input) {
+    return this.http.request(
+      `${this.path()}/reconciliations/${segment4(requiredId(reconciliationId, "PSP reconciliation ID"))}/items/${segment4(requiredId(itemId, "PSP reconciliation item ID"))}/resolve`,
+      { method: "POST", body: JSON.stringify(input) }
+    );
+  }
+  path() {
+    return `/teams/${segment4(requiredId(this.partnerId ?? "", "Partner ID"))}/psp`;
+  }
+};
+function pageQuery(input) {
+  const query = new URLSearchParams();
+  if (input.limit !== void 0) query.set("limit", String(input.limit));
+  if (input.offset !== void 0) query.set("offset", String(input.offset));
+  const value = query.toString();
+  return value ? `?${value}` : "";
+}
+function paymentQuery(input) {
+  const query = new URLSearchParams();
+  if (input.connectionId) query.set("connectionId", input.connectionId);
+  if (input.initiatingEntityType) {
+    query.set("initiatingEntityType", input.initiatingEntityType);
+  }
+  if (input.initiatingEntityId) {
+    query.set("initiatingEntityId", input.initiatingEntityId);
+  }
+  if (input.executionStatus) {
+    query.set("executionStatus", input.executionStatus);
+  }
+  if (input.settlementStatus) {
+    query.set("settlementStatus", input.settlementStatus);
+  }
+  if (input.reconciliationStatus) {
+    query.set("reconciliationStatus", input.reconciliationStatus);
+  }
+  if (input.limit !== void 0) query.set("limit", String(input.limit));
+  if (input.offset !== void 0) query.set("offset", String(input.offset));
+  const value = query.toString();
+  return value ? `?${value}` : "";
+}
+function liquidityQuery(input) {
+  const query = new URLSearchParams();
+  if (input.connectionId) query.set("connectionId", input.connectionId);
+  if (input.limit !== void 0) query.set("limit", String(input.limit));
+  if (input.offset !== void 0) query.set("offset", String(input.offset));
+  const value = query.toString();
+  return value ? `?${value}` : "";
+}
+
+// packages/sdk/src/partner.ts
+var segment5 = (value) => encodeURIComponent(value);
+var partnerPath = (partnerId, suffix = "") => `/teams/${segment5(partnerId)}${suffix}`;
+var requiredId2 = (value, label) => {
   const normalized = value.trim();
   if (!normalized) throw new Error(`${label} is required`);
   return normalized;
@@ -1639,11 +2358,6 @@ var ApiKeyInvalidReason = /* @__PURE__ */ ((ApiKeyInvalidReason2) => {
   ApiKeyInvalidReason2["EXPIRED"] = "expired";
   return ApiKeyInvalidReason2;
 })(ApiKeyInvalidReason || {});
-var ReferralCodeScope = /* @__PURE__ */ ((ReferralCodeScope2) => {
-  ReferralCodeScope2["SYSTEM"] = "system";
-  ReferralCodeScope2["TEAM"] = "team";
-  return ReferralCodeScope2;
-})(ReferralCodeScope || {});
 async function readPartnerDetail(http, partnerId) {
   return http.request(partnerPath(partnerId));
 }
@@ -1705,6 +2419,7 @@ var AnalyticsClient = class {
   async get(options = {}) {
     const query = new URLSearchParams();
     if (options.bucket) query.set("bucket", options.bucket);
+    if (options.feature) query.set("feature", options.feature);
     const suffix = query.size ? `?${query.toString()}` : "";
     return this.http.request(
       partnerPath(this.partnerId, `/analytics${suffix}`)
@@ -1734,19 +2449,19 @@ var MembersClient = class {
     );
   }
   async updateRoles(memberId, input) {
-    const normalizedMemberId = requiredId(memberId, "A Partner member ID");
+    const normalizedMemberId = requiredId2(memberId, "A Partner member ID");
     return this.http.request(
       partnerPath(
         this.partnerId,
-        `/members/${segment4(normalizedMemberId)}/roles`
+        `/members/${segment5(normalizedMemberId)}/roles`
       ),
       { method: "PATCH", body: JSON.stringify(input) }
     );
   }
   async remove(memberId) {
-    const normalizedMemberId = requiredId(memberId, "A Partner member ID");
+    const normalizedMemberId = requiredId2(memberId, "A Partner member ID");
     return this.http.request(
-      partnerPath(this.partnerId, `/members/${segment4(normalizedMemberId)}`),
+      partnerPath(this.partnerId, `/members/${segment5(normalizedMemberId)}`),
       { method: "DELETE" }
     );
   }
@@ -1791,19 +2506,19 @@ var ApiKeysClient = class {
     );
   }
   async updatePolicy(apiKeyId, policy) {
-    const normalizedApiKeyId = requiredId(apiKeyId, "A Partner API key ID");
+    const normalizedApiKeyId = requiredId2(apiKeyId, "A Partner API key ID");
     return this.http.request(
       partnerPath(
         this.partnerId,
-        `/api-keys/${segment4(normalizedApiKeyId)}/policy`
+        `/api-keys/${segment5(normalizedApiKeyId)}/policy`
       ),
       { method: "PATCH", body: JSON.stringify(policy) }
     );
   }
   async revoke(apiKeyId) {
-    const normalizedApiKeyId = requiredId(apiKeyId, "A Partner API key ID");
+    const normalizedApiKeyId = requiredId2(apiKeyId, "A Partner API key ID");
     return this.http.request(
-      partnerPath(this.partnerId, `/api-keys/${segment4(normalizedApiKeyId)}`),
+      partnerPath(this.partnerId, `/api-keys/${segment5(normalizedApiKeyId)}`),
       { method: "DELETE" }
     );
   }
@@ -1818,17 +2533,48 @@ var ReferralsClient = class {
       partnerPath(this.partnerId, "/referral-code")
     );
   }
-  async rotate() {
+  async list(options = {}) {
+    const query = options.includeRevoked ? "?includeRevoked=true" : "";
+    return this.http.request(
+      partnerPath(this.partnerId, `/referral-codes${query}`)
+    );
+  }
+  async create(input) {
+    return this.http.request(
+      partnerPath(this.partnerId, "/referral-codes"),
+      { method: "POST", body: JSON.stringify(input) }
+    );
+  }
+  async revoke(referralCodeId) {
+    const normalizedId = requiredId2(
+      referralCodeId,
+      "A Partner referral code ID"
+    );
+    await this.http.request(
+      partnerPath(this.partnerId, `/referral-codes/${segment5(normalizedId)}`),
+      { method: "DELETE" }
+    );
+  }
+  async update(input) {
+    return this.http.request(
+      partnerPath(this.partnerId, "/referral-code"),
+      { method: "PATCH", body: JSON.stringify(input) }
+    );
+  }
+  async rotate(input) {
     return this.http.request(
       partnerPath(this.partnerId, "/referral-code/rotate"),
-      { method: "POST" }
+      {
+        method: "POST",
+        ...input ? { body: JSON.stringify(input) } : {}
+      }
     );
   }
 };
 
 // packages/sdk/src/wallet.ts
-var segment5 = (value) => encodeURIComponent(value);
-var walletPath = (teamId, walletId) => walletId ? `/teams/${segment5(teamId)}/wallets/${segment5(walletId)}` : `/teams/${segment5(teamId)}/wallets`;
+var segment6 = (value) => encodeURIComponent(value);
+var walletPath = (teamId, walletId) => walletId ? `/teams/${segment6(teamId)}/wallets/${segment6(walletId)}` : `/teams/${segment6(teamId)}/wallets`;
 var WalletClient = class {
   constructor(http, events) {
     this.http = http;
@@ -1868,6 +2614,12 @@ var WalletClient = class {
   history(teamId, walletId) {
     return this.http.request(
       `${walletPath(teamId, walletId)}/bitcoin/history`
+    );
+  }
+  claimDeposit(teamId, walletId, txid, vout, input) {
+    return this.http.request(
+      `${walletPath(teamId, walletId)}/bitcoin/deposits/${segment6(txid)}/${vout}/claim`,
+      { method: "POST", body: JSON.stringify(input) }
     );
   }
   receive(teamId, walletId, input) {
@@ -1921,7 +2673,7 @@ var WalletClient = class {
   }
   payoutStatus(teamId, walletId, reference) {
     return this.http.request(
-      `${walletPath(teamId, walletId)}/bitcoin/payouts/${segment5(reference)}`
+      `${walletPath(teamId, walletId)}/bitcoin/payouts/${segment6(reference)}`
     );
   }
   listConnections(teamId, walletId) {
@@ -1940,7 +2692,7 @@ var WalletClient = class {
   }
   revokeConnection(teamId, walletId, connectionId) {
     return this.http.request(
-      `${walletPath(teamId, walletId)}/connections/${segment5(connectionId)}`,
+      `${walletPath(teamId, walletId)}/connections/${segment6(connectionId)}`,
       { method: "DELETE" }
     );
   }
@@ -1970,6 +2722,63 @@ var WalletClient = class {
   }
 };
 
+// packages/sdk/src/accounting.ts
+var segment7 = (value) => encodeURIComponent(value);
+function required(value, label) {
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`${label} is required`);
+  return normalized;
+}
+var AccountingClient = class {
+  constructor(http, partnerId) {
+    this.http = http;
+    this.partnerId = partnerId;
+  }
+  listSources(type) {
+    const query = type ? `?type=${segment7(type)}` : "";
+    return this.http.request(`${this.path()}/sources${query}`);
+  }
+  listTemplates() {
+    return this.http.request(`${this.path()}/reporting-templates`);
+  }
+  createTemplate(input) {
+    return this.http.request(`${this.path()}/reporting-templates`, {
+      method: "POST",
+      body: JSON.stringify(input)
+    });
+  }
+  async deleteTemplate(templateId) {
+    await this.http.request(
+      `${this.path()}/reporting-templates/${segment7(required(templateId, "Template ID"))}`,
+      { method: "DELETE" }
+    );
+  }
+  async generateReport(input) {
+    const response = await this.http.requestResponse(
+      `${this.path()}/reports/generic-csv`,
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+        headers: { Accept: "text/csv" }
+      }
+    );
+    return {
+      stream: response.body,
+      contentType: response.headers.get("content-type") ?? "text/csv",
+      contentDisposition: requiredHeader(response, "content-disposition"),
+      certification: "uncertified"
+    };
+  }
+  path() {
+    return `/teams/${segment7(required(this.partnerId ?? "", "Partner ID"))}/accounting`;
+  }
+};
+function requiredHeader(response, name) {
+  const value = response.headers.get(name);
+  if (!value) throw new Error(`Accounting CSV response is missing ${name}`);
+  return value;
+}
+
 // packages/sdk/src/index.ts
 var MinmoClient = class {
   constructor(options, partnerId) {
@@ -1985,7 +2794,9 @@ var MinmoClient = class {
     this.wallet = new WalletClient(this.http, this.events);
     this.otc = new OtcClient(this.http, this.events);
     this.integrations = {
-      pay: new PayClient(this.http, this.events, partnerId)
+      pay: new PayClient(this.http, this.events, partnerId),
+      psp: new PspClient(this.http, this.events, partnerId),
+      accounting: new AccountingClient(this.http, partnerId)
     };
   }
   http;
@@ -2028,6 +2839,11 @@ var PartnerClient = class extends MinmoClient {
   }
 };
 export {
+  AccountPurpose,
+  AccountStatus,
+  AccountType,
+  AccountingExportFailureCode,
+  AccountingHealthStatus,
   AgentSelectionMode,
   AgentStatus,
   AgentTeamAssociationStatus,
@@ -2036,14 +2852,19 @@ export {
   ApiKeyCapability,
   ApiKeyInvalidReason,
   ApiKeyResourceScope,
+  BalanceBasis,
   BitcoinNetwork,
+  BookEntityType,
   ConfirmationRole,
   Currency,
   DisputeResolution,
   EscrowEventType,
   EscrowNetwork,
   EventConnectionState,
+  ExecutionStatus,
+  ExportReportType,
   FxRateProvider,
+  JournalStatus,
   MemoryEventCursorStore,
   MinmoApiError,
   MinmoAuthenticationError,
@@ -2051,6 +2872,7 @@ export {
   MinmoRateLimitError,
   MinmoSdkError,
   MinmoTransportError,
+  NormalBalance,
   OnchainConfirmationSpeed,
   OtcEventType,
   ParticipantRole,
@@ -2063,12 +2885,39 @@ export {
   PaymentChannel,
   PayoutDestinationType,
   Permission,
+  PostingDirection,
+  PspAccountingTemplate,
+  PspCallbackMode,
+  PspCapability,
+  PspConnectionKind,
+  PspConnectionStatus,
+  PspDisbursementDestinationType,
+  PspEntityType,
+  PspEnvironment,
+  PspEventType,
+  PspPaymentMethod,
+  PspPaymentOperation,
+  PspProvider,
+  PspProviderBalanceStatus,
+  PspProviderSetupFieldType,
+  PspReconciliationExceptionCode,
+  PspReconciliationRecordKind,
+  PspReconciliationResolutionAction,
+  PspReconciliationStatus,
+  PspReconciliationType,
+  ReconciliationStatus,
   ReferralCodeScope,
   ResyncRequiredError,
+  SettlementStatus,
+  SourceType,
   SwapEscrowPaymentStatus,
   SwapState,
   SwapType,
   TeamRole,
+  TransactionDirection,
+  TransactionOperation,
+  ValuationBasis,
+  ValuationStatus,
   WalletConnectionScope,
   WalletEventType,
   WalletProvider

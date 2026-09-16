@@ -28,6 +28,7 @@ export interface DisputeEvidenceDto {
 /** Per-channel evidence field definitions */
 export type ChannelEvidenceConfig = Record<PaymentChannel, EvidenceFieldConfig[]>;
 export interface DisputeFilters {
+    search?: string;
     status?: string;
     agentId?: string;
     startDate?: string;

@@ -157,6 +157,8 @@ export declare enum Permission {
     ESCROW_READ = "escrow:read",
     /** Verify custodial escrow funding status */
     ESCROW_VERIFY_FUNDING = "escrow:verify_funding",
+    /** Expire an unfunded custodial escrow after its funding deadline */
+    ESCROW_EXPIRE = "escrow:expire",
     /** Release funded custodial escrows */
     ESCROW_RELEASE = "escrow:release",
     /** Refund funded custodial escrows */
@@ -195,6 +197,8 @@ export declare enum Permission {
     PARTNER_AGENTS_READ = "partner:agents_read",
     /** View all swap transactions for agents in this partner network */
     PARTNER_SWAPS_READ = "partner:swaps_read",
+    /** Manage swap transactions for agents in this partner network */
+    PARTNER_SWAPS_MANAGE = "partner:swaps_manage",
     /** View liquidity information for agents in this partner network */
     PARTNER_LIQUIDITY_READ = "partner:liquidity_read",
     /** View metrics and analytics for this partner organization */
@@ -218,7 +222,33 @@ export declare enum Permission {
     /** Read the Minmo Pay stores belonging to a team */
     PAY_STORE_READ = "pay:store_read",
     /** Provision and manage the BTCPay store bound to a team wallet */
-    PAY_STORE_MANAGE = "pay:store_manage"
+    PAY_STORE_MANAGE = "pay:store_manage",
+    /** Read PSP connections and their non-secret configuration */
+    PSP_CONNECTION_READ = "psp:connection_read",
+    /** Create, validate, and rotate PSP connections */
+    PSP_CONNECTION_MANAGE = "psp:connection_manage",
+    /** Initiate a collection through an authorized PSP connection */
+    PSP_PAYMENT_CREATE = "psp:payment_create",
+    /** Initiate a disbursement through an authorized PSP connection */
+    PSP_DISBURSEMENT_CREATE = "psp:disbursement_create",
+    /** Read normalized PSP payment state */
+    PSP_PAYMENT_READ = "psp:payment_read",
+    /** Read internal PSP accounts, attributable balances, and statements */
+    PSP_ACCOUNT_READ = "psp:account_read",
+    /** Subscribe to Partner-scoped PSP payment events */
+    PSP_EVENT_SUBSCRIBE = "psp:event_subscribe",
+    /** Read PSP reconciliation runs, items, and safe exception detail */
+    PSP_RECONCILIATION_READ = "psp:reconciliation_read",
+    /** Start a PSP transaction reconciliation run */
+    PSP_RECONCILIATION_RUN = "psp:reconciliation_run",
+    /** Resolve a PSP reconciliation exception with approved evidence */
+    PSP_RECONCILIATION_RESOLVE = "psp:reconciliation_resolve",
+    /** Read accounting Sources and saved reporting templates */
+    ACCOUNTING_READ = "accounting:read",
+    /** Create and delete saved reporting templates */
+    ACCOUNTING_TEMPLATE_MANAGE = "accounting:template_manage",
+    /** Generate bounded, uncertified reports for direct delivery */
+    ACCOUNTING_EXPORT = "accounting:export"
 }
 /**
  * Permission groups organized by business domain/service scope.
@@ -235,16 +265,18 @@ export declare const PERMISSION_GROUPS: {
     readonly SYSTEM_OPERATIONS: readonly [Permission.SYSTEM_CONFIG, Permission.SYSTEM_MONITOR, Permission.SYSTEM_AUDIT];
     readonly REFERRAL_CODE_MANAGEMENT: readonly [Permission.REFERRAL_CODE_CREATE, Permission.REFERRAL_CODE_READ];
     readonly BITCOIN_OPERATIONS: readonly [Permission.BITCOIN_WALLET_READ, Permission.BITCOIN_WALLET_RECEIVE, Permission.BITCOIN_WALLET_SEND];
-    readonly ESCROW_OPERATIONS: readonly [Permission.ESCROW_CREATE, Permission.ESCROW_READ, Permission.ESCROW_VERIFY_FUNDING, Permission.ESCROW_RELEASE, Permission.ESCROW_REFUND, Permission.ESCROW_RESOLVE_DISPUTE, Permission.ESCROW_DESCRIPTOR_PUBLISH];
+    readonly ESCROW_OPERATIONS: readonly [Permission.ESCROW_CREATE, Permission.ESCROW_READ, Permission.ESCROW_VERIFY_FUNDING, Permission.ESCROW_EXPIRE, Permission.ESCROW_RELEASE, Permission.ESCROW_REFUND, Permission.ESCROW_RESOLVE_DISPUTE, Permission.ESCROW_DESCRIPTOR_PUBLISH];
     readonly USER_MANAGEMENT: readonly [Permission.USER_READ, Permission.USER_WRITE, Permission.USER_DELETE, Permission.USER_MANAGE_ROLES];
     readonly AGENT_MANAGEMENT: readonly [Permission.AGENT_REGISTER, Permission.AGENT_MANAGE_OWN, Permission.AGENT_MANAGE_ALL, Permission.AGENT_READ_ALL];
     readonly SWAP_OPERATIONS: readonly [Permission.SWAP_READ_OWN, Permission.SWAP_READ_ALL, Permission.SWAP_CREATE, Permission.SWAP_CANCEL_OWN, Permission.SWAP_CANCEL_ALL, Permission.SWAP_APPROVE];
     readonly LIQUIDITY_OPERATIONS: readonly [Permission.LIQUIDITY_MANAGE_OWN, Permission.LIQUIDITY_MANAGE_ALL, Permission.LIQUIDITY_READ_ALL];
     readonly FX_OPERATIONS: readonly [Permission.FX_RATES_READ, Permission.FX_RATES_MANAGE];
     readonly ANALYTICS: readonly [Permission.ANALYTICS_READ_OWN, Permission.ANALYTICS_READ_ALL, Permission.ANALYTICS_EXPORT];
-    readonly PARTNER_OPERATIONS: readonly [Permission.PARTNER_READ_OWN, Permission.PARTNER_MANAGE_OWN, Permission.PARTNER_AGENT_INVITE, Permission.PARTNER_AGENT_REMOVE, Permission.PARTNER_AGENT_READ, Permission.PARTNER_AGENT_MANAGE, Permission.PARTNER_AGENTS_READ, Permission.PARTNER_SWAPS_READ, Permission.PARTNER_LIQUIDITY_READ, Permission.PARTNER_METRICS_READ, Permission.PARTNER_SERVICES_CREATE, Permission.PARTNER_SERVICES_MANAGE, Permission.PARTNER_SERVICES_READ, Permission.PARTNER_SERVICES_DELETE];
+    readonly PARTNER_OPERATIONS: readonly [Permission.PARTNER_READ_OWN, Permission.PARTNER_MANAGE_OWN, Permission.PARTNER_AGENT_INVITE, Permission.PARTNER_AGENT_REMOVE, Permission.PARTNER_AGENT_READ, Permission.PARTNER_AGENT_MANAGE, Permission.PARTNER_AGENTS_READ, Permission.PARTNER_SWAPS_READ, Permission.PARTNER_SWAPS_MANAGE, Permission.PARTNER_LIQUIDITY_READ, Permission.PARTNER_METRICS_READ, Permission.PARTNER_SERVICES_CREATE, Permission.PARTNER_SERVICES_MANAGE, Permission.PARTNER_SERVICES_READ, Permission.PARTNER_SERVICES_DELETE];
     readonly PARTNER_ADMIN_OPERATIONS: readonly [Permission.PARTNER_READ_ALL, Permission.PARTNER_MANAGE_ALL];
     readonly PAY_OPERATIONS: readonly [Permission.PAY_PAYMENT_CREATE, Permission.PAY_PAYMENT_READ, Permission.PAY_PAYMENT_CANCEL, Permission.PAY_EVENT_SUBSCRIBE, Permission.PAY_STORE_READ, Permission.PAY_STORE_MANAGE];
+    readonly PSP_OPERATIONS: readonly [Permission.PSP_CONNECTION_READ, Permission.PSP_CONNECTION_MANAGE, Permission.PSP_PAYMENT_CREATE, Permission.PSP_DISBURSEMENT_CREATE, Permission.PSP_PAYMENT_READ, Permission.PSP_ACCOUNT_READ, Permission.PSP_EVENT_SUBSCRIBE, Permission.PSP_RECONCILIATION_READ, Permission.PSP_RECONCILIATION_RUN, Permission.PSP_RECONCILIATION_RESOLVE];
+    readonly ACCOUNTING_OPERATIONS: readonly [Permission.ACCOUNTING_READ, Permission.ACCOUNTING_TEMPLATE_MANAGE, Permission.ACCOUNTING_EXPORT];
 };
 /**
  * Role-permission mapping defining what each role can do

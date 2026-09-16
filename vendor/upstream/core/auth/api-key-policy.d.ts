@@ -13,7 +13,10 @@ export declare enum ApiKeyCapability {
     ESCROW_OPERATIONS = "escrow.operations",
     ESCROW_ADMIN = "escrow.admin",
     PAY_READONLY = "pay.readonly",
-    PAY_READ_WRITE = "pay.read_write"
+    PAY_READ_WRITE = "pay.read_write",
+    PSP_READONLY = "psp.readonly",
+    PSP_COLLECTIONS = "psp.collections",
+    PSP_DISBURSEMENTS = "psp.disbursements"
 }
 export declare const API_KEY_CAPABILITY_PERMISSIONS: Record<ApiKeyCapability, readonly Permission[]>;
 export interface ApiKeyPolicyResources {

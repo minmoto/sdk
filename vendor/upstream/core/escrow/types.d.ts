@@ -177,8 +177,7 @@ export declare enum EscrowStatus {
     RELEASED = "released",
     REFUNDED = "refunded",
     EXPIRED = "expired",
-    MANUAL_REVIEW = "manual_review",
-    FAILED = "failed"
+    MANUAL_REVIEW = "manual_review"
 }
 export declare enum ParticipantRole {
     USER = "user",
@@ -325,6 +324,10 @@ export type EscrowPage = {
     total: number;
     limit: number;
     offset: number;
+};
+export type EscrowActivityResponse = {
+    open: EscrowPage;
+    history: EscrowPage;
 };
 export type EscrowDescriptorMetadata = {
     walletId?: string;
