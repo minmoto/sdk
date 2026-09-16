@@ -9,6 +9,15 @@ import type { SwapResponse } from "./swap";
 import type { PayInvoice, PayStore } from "./pay";
 import type { AgentStatus } from "./agent";
 import type { EscrowRecord } from "../escrow";
+import { PspEventType, type PspEntityType, type PspConnectionEventResponse, type PspPaymentEventResponse, type PspReconciliationEventResponse } from "./psp";
+export declare enum MinmoEventClass {
+    DOMAIN_EVENT = "domain_event",
+    PROVIDER_OBSERVATION = "provider_observation"
+}
+export declare enum MinmoEventVisibility {
+    DELIVERABLE = "deliverable",
+    INTERNAL = "internal"
+}
 /** Events belonging to the over-the-counter exchange domain. */
 export declare enum OtcEventType {
     SWAP_CREATED = "otc.swap.created",
@@ -66,6 +75,9 @@ export declare enum PayEventType {
 }
 export declare enum WalletEventType {
     SYNCED = "wallet.synced",
+    DEPOSITS_DISCOVERED = "wallet.deposits.discovered",
+    DEPOSITS_UNCLAIMED = "wallet.deposits.unclaimed",
+    DEPOSITS_CLAIMED = "wallet.deposits.claimed",
     PAYMENT_PENDING = "wallet.payment.pending",
     PAYMENT_SUCCEEDED = "wallet.payment.succeeded",
     PAYMENT_FAILED = "wallet.payment.failed"
@@ -80,7 +92,7 @@ export declare enum EscrowEventType {
     EXPIRED = "escrow.expired"
 }
 /** Union of all domain-scoped event types. */
-export type MinmoEventType = OtcEventType | PayEventType | WalletEventType | EscrowEventType;
+export type MinmoEventType = OtcEventType | PayEventType | WalletEventType | EscrowEventType | PspEventType;
 /** Runtime registry useful for validation, documentation, and tests. */
 export declare const MINMO_EVENT_TYPES: readonly MinmoEventType[];
 type Brand<T, Name extends string> = T & {
@@ -100,6 +112,8 @@ export declare enum MinmoEventSourceModule {
     ESCROW = "escrow",
     PAYMENT = "payment",
     AUTH = "auth",
+    PSP = "psp",
+    ACCOUNTING = "accounting",
     SYSTEM = "system"
 }
 export type MinmoEventMetadata = {
@@ -115,6 +129,13 @@ export type MinmoEventMetadata = {
         storeId?: string;
         agentId?: string;
         beneficiaryId?: string;
+        pspConnectionId?: string;
+        pspEntityType?: PspEntityType;
+        pspEntityId?: string;
+        pspPaymentId?: string;
+        pspReconciliationId?: string;
+        accountingDestinationId?: string;
+        accountingExportId?: string;
     };
 };
 export type AgentAvailabilityChangedResponse = {
@@ -150,6 +171,7 @@ export type WalletSyncedResponse = {
     walletId: string;
     syncedAt: string;
 };
+export type WalletDepositsChangedResponse = WalletSyncedResponse;
 export declare enum WalletPaymentType {
     SEND = "send",
     RECEIVE = "receive"
@@ -171,6 +193,7 @@ export type WalletPaymentResponse = {
     sentAt?: string;
     description?: string;
     txid?: string;
+    vout?: number;
     invoice?: string;
     paymentHash?: string;
     providerPaymentId?: string;
@@ -234,6 +257,9 @@ export type MinmoEventPayloadMap = {
     [PayEventType.STORE_CONNECTED]: PayStore;
     [PayEventType.STORE_CONNECTION_FAILED]: PayStore;
     [WalletEventType.SYNCED]: WalletSyncedResponse;
+    [WalletEventType.DEPOSITS_DISCOVERED]: WalletDepositsChangedResponse;
+    [WalletEventType.DEPOSITS_UNCLAIMED]: WalletDepositsChangedResponse;
+    [WalletEventType.DEPOSITS_CLAIMED]: WalletDepositsChangedResponse;
     [WalletEventType.PAYMENT_PENDING]: WalletPaymentResponse;
     [WalletEventType.PAYMENT_SUCCEEDED]: WalletPaymentResponse;
     [WalletEventType.PAYMENT_FAILED]: WalletPaymentResponse;
@@ -243,6 +269,20 @@ export type MinmoEventPayloadMap = {
     [EscrowEventType.RELEASED]: EscrowEventResponse;
     [EscrowEventType.REFUNDED]: EscrowEventResponse;
     [EscrowEventType.EXPIRED]: EscrowEventResponse;
+    [PspEventType.CONNECTION_CREATED]: PspConnectionEventResponse;
+    [PspEventType.CONNECTION_ACTIVATED]: PspConnectionEventResponse;
+    [PspEventType.CONNECTION_SUSPENDED]: PspConnectionEventResponse;
+    [PspEventType.CONNECTION_REVOKED]: PspConnectionEventResponse;
+    [PspEventType.PAYMENT_CREATED]: PspPaymentEventResponse;
+    [PspEventType.PAYMENT_SUBMITTED]: PspPaymentEventResponse;
+    [PspEventType.PAYMENT_PENDING]: PspPaymentEventResponse;
+    [PspEventType.PAYMENT_SUCCEEDED]: PspPaymentEventResponse;
+    [PspEventType.PAYMENT_FAILED]: PspPaymentEventResponse;
+    [PspEventType.PAYMENT_OUTCOME_UNKNOWN]: PspPaymentEventResponse;
+    [PspEventType.PAYMENT_CANCELLED]: PspPaymentEventResponse;
+    [PspEventType.RECONCILIATION_COMPLETED]: PspReconciliationEventResponse;
+    [PspEventType.RECONCILIATION_EXCEPTION_DETECTED]: PspReconciliationEventResponse;
+    [PspEventType.RECONCILIATION_EXCEPTION_RESOLVED]: PspReconciliationEventResponse;
 };
 /**
  * Canonical persisted and projected event envelope.

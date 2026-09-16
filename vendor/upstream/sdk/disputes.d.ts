@@ -52,8 +52,12 @@ export declare class EscrowDisputesClient {
     constructor(http: HttpClient);
     /** Lists all swaps currently requiring dispute arbitration. */
     list(): Promise<SwapResource[]>;
+    /** Lists disputes in one explicitly authorized Partner. */
+    listForPartner(partnerId: string): Promise<SwapResource[]>;
     /** Reads the authoritative swap resource containing the dispute. */
     get(swapId: string): Promise<SwapResource>;
+    /** Reads a dispute after enforcing access to its Partner scope. */
+    getForPartner(partnerId: string, swapId: string): Promise<SwapResource>;
     /** Opens a dispute as an authorized swap participant. */
     open(swapId: string, input: OpenDisputeInput): Promise<SwapResource>;
     /** Adds participant evidence while the dispute is collecting evidence. */
@@ -63,6 +67,8 @@ export declare class EscrowDisputesClient {
      * Swaps without an escrow record use the API's compatibility path.
      */
     resolve(swapId: string, input: ResolveDisputeInput): Promise<SwapResource>;
+    /** Records a dispute decision inside one explicitly authorized Partner. */
+    resolveForPartner(partnerId: string, swapId: string, input: ResolveDisputeInput): Promise<SwapResource>;
     /** Executes the payout required after a dispute enters refund state. */
     executeRefund(swapId: string, input: ExecuteDisputeRefundInput): Promise<SwapResource>;
     /** Lists dispute history for one agent. */

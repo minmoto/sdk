@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "upstreamRepository": "https://github.com/minmoto/mini",
-  "upstreamCommit": "4e5e473c834535699553ede6b9c4923eef443d96",
-  "artifactSha256": "b3aaf0bd5bc0de36312bfbb5401f7d551578c95a2264dead255492d4ce23e479"
+  "upstreamCommit": "e8e17d09fe26466e5ba1952592a44d9732c9f15f",
+  "artifactSha256": "258960138f16d27a927bb6c3095255970420e508fd2d565dbcd6487070b7be2d"
 }

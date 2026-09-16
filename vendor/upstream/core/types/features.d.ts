@@ -1,3 +1,4 @@
+import type { PlanCode } from "./billing";
 export declare enum FeatureId {
     FX = "fx",
     AGENTS = "agents",
@@ -46,9 +47,29 @@ export type FeatureMetadata = {
     config?: Record<string, unknown>;
 };
 export type FeaturesMetadata = Partial<Record<ConsoleFeatureId, FeatureMetadata>>;
+/**
+ * Whether a team's plan grants the entitlement a feature is gated on.
+ *
+ * Separate from `state`: `state` is the team's own enablement flag, which an
+ * admin toggles, while this is what the plan bought. A feature needs both, so
+ * reporting them apart lets a client say "switched on but not covered by this
+ * plan" rather than collapsing the two into one misleading answer.
+ */
+export type FeatureEntitlementSummary = {
+    entitled: boolean;
+    /** Cheapest plan that would grant it. Null once entitled, or if no plan does. */
+    requiredPlanCode: PlanCode | null;
+};
+/**
+ * Entitlement fields are optional because they are added at the API boundary,
+ * where billing state is reachable, rather than by the team metadata reader
+ * that produces the rest. Absent means unknown, and a client should read that
+ * as entitled: visibility fails open, and the server-side feature gate — not
+ * the UI — is the enforcement boundary.
+ */
 export type FeatureSummaryDto = FeatureMetadata & {
     enabled: boolean;
-};
+} & Partial<FeatureEntitlementSummary>;
 export type UpdateFeatureRequest = {
     state?: FeatureAvailabilityState;
     label?: string;

@@ -1,4 +1,9 @@
 import type { Currency, CurrencyPair } from "./currency";
+import type { SwapType } from "./agent";
+export declare enum FxRateScope {
+    PARTNER = "partner",
+    SYSTEM = "system"
+}
 export interface FxRate {
     /** Currency being priced, for example BTC. */
     baseCurrency: Currency;
@@ -15,6 +20,7 @@ export interface FxRateRequest {
     baseCurrency: Currency;
     targetCurrency: Currency;
     amount?: string;
+    type?: SwapType;
 }
 export interface FxRateSource {
     getName(): string;
@@ -129,13 +135,44 @@ export interface PartnerRateResponse {
     agentId?: string;
     /** The resolved FX rate and its source/timestamp metadata. */
     fxRate: FxRate;
+    /** Describes whether the team policy or the global market supplied the rate. */
+    coverage: PartnerRateCoverage;
     expiresAt?: string;
     policyVersion?: string;
+}
+export declare enum PartnerRateResolution {
+    TEAM_CONFIGURED = "team_configured",
+    GLOBAL_FALLBACK = "global_fallback"
+}
+export declare enum PartnerRateFallbackReason {
+    TEAM_CURRENCY_UNSUPPORTED = "team_currency_unsupported",
+    TEAM_RATE_UNAVAILABLE = "team_rate_unavailable"
+}
+export interface PartnerRateCoverage {
+    resolution: PartnerRateResolution;
+    configuredForTeam: boolean;
+    fallbackReason?: PartnerRateFallbackReason;
+}
+export interface PartnerQuoteFeeBreakdown {
+    teamId: string;
+    descriptorId: string;
+    enabled: boolean;
+    policyVersion: number;
+    agentMarginBps: number;
+    escrowFeeBps: number;
+    escrowFeeSats: string;
+    payoutNetworkFeeSats: string;
+    principalSats: string;
+    receiverPayoutSats: string;
+    minimumSats?: string;
+    maximumSats?: string;
+    /** Network fees remain estimates until the final payout destination is known. */
+    estimated: boolean;
 }
 export interface PartnerQuoteResponse extends PartnerRateResponse {
     quoteId: string;
     inputAmount?: string;
     outputAmount?: string;
-    fees?: string;
+    fees?: PartnerQuoteFeeBreakdown;
 }
 //# sourceMappingURL=rates.d.ts.map

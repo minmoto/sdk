@@ -1,13 +1,10 @@
-import { type AnalyticsBucket, type AnalyticsDashboardResponse, type ApiKeyResourcePolicy, type PartnerCurrencySettings, type TeamRole } from "@minmo/core";
+import { type AnalyticsBucket, type AnalyticsResponse, type ApiKeyResourcePolicy, type ConsoleFeatureId, type PartnerCurrencySettings, ReferralCodeScope, type ReferralCodeUse, type TeamRole } from "@minmo/core";
 import type { HttpClient } from "./http";
 export declare enum ApiKeyInvalidReason {
     MANUALLY_REVOKED = "manually-revoked",
     EXPIRED = "expired"
 }
-export declare enum ReferralCodeScope {
-    SYSTEM = "system",
-    TEAM = "team"
-}
+export { ReferralCodeScope } from "@minmo/core";
 export interface NostrIdentity {
     publicKey: string | null;
     npub: string | null;
@@ -80,12 +77,20 @@ export interface ReferralCode {
     code: string;
     scope: ReferralCodeScope;
     teamId: string | null;
+    allowedUses: ReferralCodeUse[];
     isActive: boolean;
     usageCount: number;
     createdAt: string;
 }
+export interface ConfigureReferralCodeInput {
+    allowedUses: ReferralCodeUse[];
+}
+export interface ListReferralCodesOptions {
+    includeRevoked?: boolean;
+}
 export interface AnalyticsOptions {
     bucket?: AnalyticsBucket;
+    feature?: ConsoleFeatureId;
 }
 interface PartnerDetailResponse {
     team: Account;
@@ -122,7 +127,7 @@ export declare class AnalyticsClient {
     private readonly http;
     private readonly partnerId;
     constructor(http: HttpClient, partnerId: string);
-    get(options?: AnalyticsOptions): Promise<AnalyticsDashboardResponse>;
+    get(options?: AnalyticsOptions): Promise<AnalyticsResponse>;
 }
 export declare class MembersClient {
     private readonly http;
@@ -157,7 +162,10 @@ export declare class ReferralsClient {
     private readonly partnerId;
     constructor(http: HttpClient, partnerId: string);
     get(): Promise<ReferralCode | null>;
-    rotate(): Promise<ReferralCode>;
+    list(options?: ListReferralCodesOptions): Promise<ReferralCode[]>;
+    create(input: ConfigureReferralCodeInput): Promise<ReferralCode>;
+    revoke(referralCodeId: string): Promise<void>;
+    update(input: ConfigureReferralCodeInput): Promise<ReferralCode>;
+    rotate(input?: ConfigureReferralCodeInput): Promise<ReferralCode>;
 }
-export {};
 //# sourceMappingURL=partner.d.ts.map

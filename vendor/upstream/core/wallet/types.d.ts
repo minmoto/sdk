@@ -124,6 +124,7 @@ export type WalletPaymentHistoryItem = {
     sentAt?: string;
     description?: string;
     txid?: string;
+    vout?: number;
     invoice?: string;
     paymentHash?: string;
     providerPaymentId?: string;
@@ -135,6 +136,50 @@ export type WalletPaymentHistoryItem = {
     network?: BitcoinNetwork;
     destination?: string;
     explorerUrl?: string;
+};
+export declare enum WalletDepositState {
+    AWAITING_CONFIRMATIONS = "awaiting_confirmations",
+    AUTOMATIC_CLAIM_IN_PROGRESS = "automatic_claim_in_progress",
+    CLAIM_FEE_APPROVAL_REQUIRED = "claim_fee_approval_required",
+    CLAIM_FAILED = "claim_failed"
+}
+export declare enum WalletDepositClaimErrorCode {
+    MAX_DEPOSIT_CLAIM_FEE_EXCEEDED = "max_deposit_claim_fee_exceeded",
+    MISSING_UTXO = "missing_utxo",
+    GENERIC = "generic"
+}
+export type WalletDepositClaimError = {
+    code: WalletDepositClaimErrorCode;
+    message: string;
+    configuredMaxFeeRateSatPerVbyte?: number;
+    requiredFeeSats?: string;
+    requiredFeeRateSatPerVbyte?: number;
+};
+export type WalletRecommendedFees = {
+    fastestFeeRateSatPerVbyte: number;
+    halfHourFeeRateSatPerVbyte: number;
+    hourFeeRateSatPerVbyte: number;
+    economyFeeRateSatPerVbyte: number;
+    minimumFeeRateSatPerVbyte: number;
+};
+export type WalletUnclaimedDeposit = {
+    outpoint: string;
+    txid: string;
+    vout: number;
+    amountSats: string;
+    isMature: boolean;
+    state: WalletDepositState;
+    explorerUrl?: string;
+    claimError?: WalletDepositClaimError;
+    recommendedFees?: WalletRecommendedFees;
+};
+export type WalletDepositClaimInput = {
+    maxFeeRateSatPerVbyte: number;
+    feeAccepted: boolean;
+};
+export type WalletDepositClaimResult = {
+    payment: WalletPaymentHistoryItem;
+    overview: WalletOverview;
 };
 export type StableBalanceOverview = {
     enabled: boolean;
@@ -158,6 +203,8 @@ export type WalletOverview = {
     identityPubkey?: string;
     syncedAt: string;
     stableBalance?: StableBalanceOverview;
+    /** Visible pending funds that are not included in either balance field. */
+    unclaimedDeposits: WalletUnclaimedDeposit[];
     history: WalletPaymentHistoryItem[];
 };
 export interface WalletInstanceConfig {
