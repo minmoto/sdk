@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/minmoto/sdk/compare/sdk-v0.2.0...sdk-v0.3.0) (2026-09-16)
+
+
+### Features
+
+* add PSP and accounting integrations ([a49150c](https://github.com/minmoto/sdk/commit/a49150c3bd936517b1b0d83b57211e8d20d32176))
+
 ## [0.2.0](https://github.com/minmoto/sdk/compare/sdk-v0.1.1...sdk-v0.2.0) (2026-08-25)
 
 
